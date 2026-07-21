@@ -22,3 +22,10 @@ npm run build      # builds the React UI into ../server/wwwroot
 cd ../server
 dotnet run         # prints a http://127.0.0.1:<port>/?token=... URL - open it in a browser
 ```
+
+## Testing
+
+`e2e/` has Playwright tests that build the real app, run it, connect it to a disposable
+SSH server, and check the terminal actually shows live shell output in a real browser.
+See [e2e/README.md](./e2e/README.md). CI (`.github/workflows/ci.yml`) runs the same build
++ e2e suite on Linux for every PR.
