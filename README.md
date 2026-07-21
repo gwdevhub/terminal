@@ -23,6 +23,20 @@ cd ../server
 dotnet run         # prints a http://127.0.0.1:<port>/?token=... URL - open it in a browser
 ```
 
+## Building a standalone executable
+
+```sh
+cd web && npm install && npm run build   # build the UI first - it gets embedded below
+cd ../server
+dotnet publish -c Release -r win-x64     # or linux-x64 / osx-x64 / osx-arm64
+```
+
+This produces one self-contained file (`bin/Release/net8.0/<rid>/publish/Slopterm.Server[.exe]`)
+with the .NET runtime, all dependencies, and the entire React UI embedded inside it — no
+`wwwroot` folder, no .NET install, nothing else needed alongside it. Or run the
+`Publish` workflow in GitHub Actions (Actions tab → Publish → Run workflow) to get a
+downloadable build for Windows/Linux/macOS without needing a local toolchain at all.
+
 ## Testing
 
 `e2e/` has Playwright tests that build the real app, run it, connect it to a disposable

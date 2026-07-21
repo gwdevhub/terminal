@@ -8,10 +8,22 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <!-- We self-host via Kestrel only; suppress the IIS-hosting web.config this SDK
+         otherwise generates, since it implies a deployment model we don't support. -->
+    <IsWebConfigTransformDisabled>true</IsWebConfigTransformDisabled>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="SSH.NET" Version="2025.1.0" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The built React app is embedded into the assembly itself (see Program.cs), not
+         copied to disk next to the exe, so a single published file is truly everything. -->
+    <Content Remove="wwwroot/**" />
+    <EmbeddedResource Include="wwwroot/**" />
   </ItemGroup>
 
 </Project>

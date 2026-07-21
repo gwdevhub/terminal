@@ -1,8 +1,10 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Reflection;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.FileProviders;
 using Slopterm.Server;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,8 +70,11 @@ app.Use(async (context, next) =>
     context.Response.StatusCode = StatusCodes.Status401Unauthorized;
 });
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
+// The React build is embedded in this assembly (see the .csproj), not read from a
+// wwwroot folder on disk, so the published single-file exe is genuinely self-contained.
+var webAssets = new ManifestEmbeddedFileProvider(Assembly.GetExecutingAssembly(), "wwwroot");
+app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = webAssets });
+app.UseStaticFiles(new StaticFileOptions { FileProvider = webAssets });
 app.UseWebSockets();
 
 app.MapPost("/api/ssh/connect", (ConnectRequest request) =>
