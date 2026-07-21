@@ -88,6 +88,21 @@ spirit of Termius, targeting Linux, macOS and Windows.
   Default to **Option A** unless Android-native polish (battery life, app size,
   Keystore-backed key storage) proves to matter enough to justify maintaining two
   backend implementations in lockstep.
+
+- **Decision (2026-07-21): go with Option A, conditional on APK size.** Estimate (not yet
+  measured — no Android build exists) for a trimmed, R8-enabled release build shipped as
+  a per-ABI **Android App Bundle** (never a fat universal APK bundling all four ABIs):
+  roughly **15–35 MB installed for the `arm64-v8a` slice**. A fat untrimmed universal APK
+  would instead run **60–90 MB+** — do not ship that shape.
+  - **Size budget / go-no-go checkpoint:** once the first Android prototype exists, measure
+    the actual installed size of the `arm64-v8a` AAB slice. If it stays under roughly
+    **40 MB**, Option A stands. If it lands meaningfully above that (say 60MB+) even after
+    trimming/R8/single-ABI splitting, treat that as the trigger to revisit Option B
+    (native Kotlin backend) rather than accepting the bloat — don't just wave it through
+    because the code is already written.
+  - Concretely: publish Android as an AAB (not a universal APK), enable R8/resource
+    shrinking and .NET trimming (re-testing reflection-dependent paths per the Native AOT
+    note above), and target `arm64-v8a` as the primary/first-supported ABI.
 - Treat Android as a later milestone (after desktop M0–M5), not something to design the
   desktop backend around now — but keep this constraint in mind either way: don't take a
   dependency on anything (reflection-heavy patterns are fine, WASI/browser-API-only
