@@ -35,6 +35,12 @@ spirit of Termius, targeting Linux, macOS and Windows.
 
 - End users must **not** need the .NET runtime pre-installed. Publish **self-contained,
   single-file** binaries per RID (`win-x64`, `linux-x64`, `osx-x64`, `osx-arm64`).
+- The React build isn't just self-contained at the runtime level - it's embedded into the
+  published assembly itself (`EmbeddedResource` in `Slopterm.Server.csproj`, served via
+  `ManifestEmbeddedFileProvider` in `Program.cs`), not copied to a `wwwroot` folder next
+  to the exe. `dotnet publish` produces one file with genuinely everything in it. Run
+  the `Publish` GitHub Actions workflow (`workflow_dispatch`) to get a downloadable build
+  for each OS.
 - Do not reach for Native AOT / aggressive trimming by default. SSH.NET and typical
   JSON/DI usage rely on reflection that trimming can silently break, and chasing AOT
   compatibility adds compile-time complexity for a marginal size win. Use a plain
