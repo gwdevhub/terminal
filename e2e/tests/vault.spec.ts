@@ -12,9 +12,16 @@ const ctx = JSON.parse(readFileSync(resolve(HERE, '../.tmp/context.json'), 'utf-
   sshPassword: string
 }
 
+function gotoHostsSection(page: import('@playwright/test').Page) {
+  // Exact match matters: "Known Hosts" also contains the substring "Hosts", which a
+  // has-text()/text= selector would ambiguously match - same class of bug as "Connect"
+  // vs. "Quick Connect" below.
+  return page.getByRole('button', { name: 'Hosts', exact: true }).click()
+}
+
 test('creates a vault, saves a host, connects to it, and deletes it', async ({ page }) => {
   await page.goto(ctx.baseUrl)
-  await page.click('text=Saved Hosts')
+  await gotoHostsSection(page)
 
   // Fresh vault dir per e2e run (see global-setup.ts), so this is always the setup flow.
   await expect(page.getByText('Create a vault master password')).toBeVisible()
@@ -23,6 +30,7 @@ test('creates a vault, saves a host, connects to it, and deletes it', async ({ p
 
   await expect(page.getByText('No saved hosts yet.')).toBeVisible({ timeout: 10_000 })
 
+  await page.click('button:has-text("+ New host")')
   await page.fill('input[placeholder=Name]', 'e2e test host')
   await page.fill('input[placeholder=Address]', ctx.sshHost)
   await page.fill('input[type=number]', String(ctx.sshPort))
@@ -31,16 +39,18 @@ test('creates a vault, saves a host, connects to it, and deletes it', async ({ p
   await page.click('button:has-text("Save host")')
 
   await expect(page.getByText('e2e test host')).toBeVisible({ timeout: 10_000 })
+  await page.click('text=e2e test host')
 
-  // Exact match matters here: "Quick Connect" (the tab button, always rendered) also
-  // contains the substring "Connect", which a has-text() selector would ambiguously match.
+  // Exact match matters here too: "Quick Connect" (the nav item, always rendered)
+  // also contains the substring "Connect".
   await page.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(async () => {
     expect(await page.locator('.xterm-rows').innerText()).toContain('Welcome to OpenSSH Server')
   }).toPass({ timeout: 15_000 })
 
   await page.click('button:has-text("Disconnect")')
-  await page.click('text=Saved Hosts')
+  await gotoHostsSection(page)
+  await page.click('text=e2e test host')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.getByText('No saved hosts yet.')).toBeVisible({ timeout: 10_000 })
 })
