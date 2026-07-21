@@ -5,7 +5,17 @@ spirit of Termius, targeting Linux, macOS and Windows.
 
 ## Architecture
 
-- **Front-end:** React + TypeScript + xterm.js, built with Vite, served as a static bundle.
+- **Front-end:** React + TypeScript + Tailwind CSS + xterm.js, built with Vite, served as
+  a static bundle. Decided over a native (Avalonia) UI specifically so the terminal is
+  reachable from any device's browser, not just a desktop window.
+- **Mobile layout is a first-class concern, not an afterthought.** The backend serves a
+  plain HTTP(S) URL, so a phone/tablet on the same network (or over a tunnel) is a
+  realistic client, not an edge case. Build every screen mobile-first with Tailwind's
+  responsive utilities from the start (host list, vault, SFTP browser, tab bar) — don't
+  bolt on responsiveness after the desktop layout is done. The terminal view itself
+  (xterm.js) is the one exception where small-screen usability is inherently limited, but
+  its surrounding chrome (tabs, keyboard toolbar, connect/disconnect controls) must still
+  work at phone width.
 - **Backend:** .NET 8 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
   serves the built React bundle plus a WebSocket PTY stream over a local ASP.NET Core
   (Kestrel) HTTP server.
