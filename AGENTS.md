@@ -45,6 +45,28 @@ spirit of Termius, targeting Linux, macOS and Windows.
   the CLR in a self-contained binary. Justify additions against
   SSH.NET + ASP.NET Core Kestrel + a JSON serializer before adding more.
 
+## Mobile packaging (Android APK) — future consideration
+
+- **Do not pursue a pure browser-sandboxed WASM build for Android.** Compiling the C#
+  backend to WebAssembly and running it inside a WebView/browser JS engine sounds
+  appealing ("wasm runs everywhere"), but browser-sandboxed WASM has no raw TCP socket
+  access — it can only speak HTTP/WebSocket. SSH.NET fundamentally needs a real TCP
+  socket to the target host, so this route would require a separate always-on relay/proxy
+  doing the actual SSH connection, which breaks the local-only, zero-knowledge design and
+  reintroduces a hosted-service dependency we've deliberately avoided everywhere else.
+- **The viable path if/when Android packaging happens: .NET for Android (MAUI) hosting
+  the same Kestrel+SSH.NET backend natively, with an in-app `WebView` pointed at it**,
+  instead of the desktop model of opening the user's own external browser. This reuses
+  the existing backend and the existing React/Tailwind/xterm.js front-end unchanged — no
+  WASM, no rewrite — because the C# runs as native ahead-of-time/JIT-compiled code inside
+  the app process (same category as a Blazor Hybrid app), so SSH.NET's real sockets keep
+  working. The only new work is the Android host shell + foreground-service handling to
+  keep the SSH session alive while the app is backgrounded.
+- Treat Android as a later milestone (after desktop M0–M5), not something to design the
+  backend around now — but keep this constraint in mind: don't take a dependency on
+  anything (reflection-heavy patterns are fine here, WASI/browser API assumptions are
+  not) that would foreclose the MAUI/WebView route later.
+
 ## Security
 
 - Backend HTTP/WebSocket port: loopback-only by default, a per-launch auth token embedded
