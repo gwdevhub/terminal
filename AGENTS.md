@@ -36,10 +36,25 @@ spirit of Termius, targeting Linux, macOS and Windows.
 - **Backend:** .NET 8 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
   serves the built React bundle plus a WebSocket PTY stream over a local ASP.NET Core
   (Kestrel) HTTP server.
-- **No bundled browser/webview.** The backend binds `127.0.0.1` on a (by default random)
-  port and prints the URL; the user opens it in whatever browser they already have
-  installed — the code-server/Jupyter model. Never bind `0.0.0.0` without an explicit,
-  user-supplied opt-in flag for remote access.
+- **No bundled browser/webview.** The backend binds `127.0.0.1`; the user opens it in
+  whatever browser they already have installed — the code-server/Jupyter model. Never
+  bind `0.0.0.0` without an explicit, user-supplied opt-in flag for remote access.
+- **Fixed port with random fallback (`Program.cs`, `PreferredPort = 51823`).** Used to be
+  an OS-assigned random port every launch, but that broke installed-PWA shortcuts: a PWA
+  is installed against a specific origin (port included), so a random port made any
+  installed icon go stale the moment the app restarted. Probes the fixed port with a
+  throwaway `TcpListener` before Kestrel binds (small TOCTOU window, acceptable for a
+  single-user local app) and falls back to port 0 if it's occupied. Not a security
+  regression - the actual auth boundary is the per-launch token below, not port secrecy.
+- **PWA-installable (`web/public/manifest.webmanifest`, `sw.js`, `icon-*.png`).** The
+  service worker deliberately does zero caching (pure network passthrough) - this is a
+  live SSH/vault client, nothing here should ever serve stale content from a cache.
+  `manifest.webmanifest`/`sw.js`/`icon-*.png`/`favicon.svg` are exempted from the
+  token/cookie auth gate in `Program.cs` (`publicPaths`) since none of them are sensitive
+  and a browser's install-evaluation fetches aren't guaranteed to carry credentials the
+  same way an authenticated page's own fetches do. Verified installability isn't just
+  inferred from "manifest + service worker exist" - confirmed via Chromium's own
+  `Page.getInstallabilityErrors` CDP call in `e2e/tests/pwa.spec.ts` (returns `[]`).
 - **Vault (implemented, `server/Vault/`):** local, per-item records (stable id +
   `updatedAt`) — not one monolithic blob — encrypted with AES-GCM behind a master
   password (Argon2id KDF via `Konscious.Security.Cryptography.Argon2`, a justified

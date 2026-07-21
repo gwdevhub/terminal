@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -11,10 +12,37 @@ using Slopterm.Server;
 using Slopterm.Server.Native;
 using Slopterm.Server.Vault;
 
+// Static asset paths that don't need the auth cookie/token - none of them are sensitive
+// (no secrets, just "an app called slopterm exists"), and installing as a PWA relies on
+// the browser fetching the manifest/service worker/icons in ways that aren't guaranteed
+// to carry credentials the same way an authenticated page's own fetches do.
+var publicPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    "/manifest.webmanifest", "/sw.js", "/favicon.svg",
+    "/icon-192.png", "/icon-192-maskable.png", "/icon-512.png", "/icon-512-maskable.png",
+};
+
+// A fixed, stable port so an installed PWA shortcut (origin-scoped, port included) keeps
+// working across app restarts - falls back to an OS-assigned port if it's ever occupied.
+// This isn't a security regression: the actual auth boundary is the per-launch token
+// below, not port secrecy.
+const int PreferredPort = 51823;
+var port = PreferredPort;
+try
+{
+    var probe = new TcpListener(IPAddress.Loopback, PreferredPort);
+    probe.Start();
+    probe.Stop();
+}
+catch (SocketException)
+{
+    port = 0;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Loopback-only, OS-assigned free port: never reachable from other machines by default.
-builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, 0));
+// Loopback-only: never reachable from other machines by default.
+builder.WebHost.ConfigureKestrel(options => options.Listen(IPAddress.Loopback, port));
 
 var app = builder.Build();
 
@@ -35,13 +63,19 @@ app.Use(async (context, next) =>
     var origin = context.Request.Headers.Origin.ToString();
     if (!string.IsNullOrEmpty(origin))
     {
-        var port = context.Request.Host.Port;
-        var allowedOrigins = new[] { $"http://127.0.0.1:{port}", $"http://localhost:{port}" };
+        var requestPort = context.Request.Host.Port;
+        var allowedOrigins = new[] { $"http://127.0.0.1:{requestPort}", $"http://localhost:{requestPort}" };
         if (!allowedOrigins.Contains(origin))
         {
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
         }
+    }
+
+    if (publicPaths.Contains(context.Request.Path.Value ?? string.Empty))
+    {
+        await next();
+        return;
     }
 
     if (context.Request.Cookies["slopterm_token"] == launchToken)
