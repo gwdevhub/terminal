@@ -48,7 +48,7 @@ test('creates a vault, saves a host, connects to it, and deletes it', async ({ p
     expect(await page.locator('.xterm-rows').innerText()).toContain('Welcome to OpenSSH Server')
   }).toPass({ timeout: 15_000 })
 
-  await page.click('button:has-text("Disconnect")')
+  await page.getByRole('button', { name: `Close ${ctx.sshUsername}@${ctx.sshHost}` }).click()
   await gotoHostsSection(page)
   await page.click('text=e2e test host')
   await page.getByRole('button', { name: 'Delete', exact: true }).click()

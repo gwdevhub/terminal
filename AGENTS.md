@@ -25,8 +25,14 @@ spirit of Termius, targeting Linux, macOS and Windows.
   collapse (issue #11's baseline, not a full separate spec pass): the nav rail becomes a
   horizontally-scrollable bar, the grid drops to one column, and the details panel stacks
   below the grid with its own close button instead of living in a persistent side column.
-  Multi-session tabs (issue #9) are not part of this - still a single active session/view
-  at a time.
+  Multi-session tabs (issue #9, implemented) let more than one connection stay open at
+  once - see `TabBar.tsx`/`App.tsx`. Every open tab's `TerminalView` stays mounted (just
+  CSS `hidden`) even while inactive, so switching tabs doesn't tear down its WebSocket -
+  proved via an e2e test that types into two separate live sessions and confirms neither
+  leaks into the other. Catch from that testing: switching tabs alone doesn't move
+  keyboard focus into the newly-visible terminal (it stays mounted-but-hidden, so nothing
+  else does it) - `TerminalView` takes an `isActive` prop and re-`focus()`s itself when it
+  becomes the active tab.
 - **Backend:** .NET 8 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
   serves the built React bundle plus a WebSocket PTY stream over a local ASP.NET Core
   (Kestrel) HTTP server.
