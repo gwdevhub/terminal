@@ -1,0 +1,19 @@
+# .NET
+bin/
+obj/
+*.user
+publish/
+
+# Node / React
+node_modules/
+dist/
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vs/
+.idea/
+*.swp
