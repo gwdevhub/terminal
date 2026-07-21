@@ -16,6 +16,17 @@ spirit of Termius, targeting Linux, macOS and Windows.
   (xterm.js) is the one exception where small-screen usability is inherently limited, but
   its surrounding chrome (tabs, keyboard toolbar, connect/disconnect controls) must still
   work at phone width.
+- **App shell (implemented, `web/src/components/AppShell.tsx` + `NavRail`/`HostGrid`/
+  `HostDetailsPanel`/`HostsSection`):** the Termius-reference 3-pane layout (issues #8/#10)
+  - left nav rail (Quick Connect/Hosts/Keychain/Port Forwarding/Snippets/Known
+  Hosts/Logs - only Quick Connect and Hosts are functional, the rest are "coming soon"
+  placeholders), a searchable host card grid, and a right-hand Host Details panel (always
+  present on desktop, even empty, so its container never has to be added later). Mobile
+  collapse (issue #11's baseline, not a full separate spec pass): the nav rail becomes a
+  horizontally-scrollable bar, the grid drops to one column, and the details panel stacks
+  below the grid with its own close button instead of living in a persistent side column.
+  Multi-session tabs (issue #9) are not part of this - still a single active session/view
+  at a time.
 - **Backend:** .NET 8 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
   serves the built React bundle plus a WebSocket PTY stream over a local ASP.NET Core
   (Kestrel) HTTP server.
