@@ -54,18 +54,44 @@ spirit of Termius, targeting Linux, macOS and Windows.
   socket to the target host, so this route would require a separate always-on relay/proxy
   doing the actual SSH connection, which breaks the local-only, zero-knowledge design and
   reintroduces a hosted-service dependency we've deliberately avoided everywhere else.
-- **The viable path if/when Android packaging happens: .NET for Android (MAUI) hosting
-  the same Kestrel+SSH.NET backend natively, with an in-app `WebView` pointed at it**,
-  instead of the desktop model of opening the user's own external browser. This reuses
-  the existing backend and the existing React/Tailwind/xterm.js front-end unchanged — no
-  WASM, no rewrite — because the C# runs as native ahead-of-time/JIT-compiled code inside
-  the app process (same category as a Blazor Hybrid app), so SSH.NET's real sockets keep
-  working. The only new work is the Android host shell + foreground-service handling to
-  keep the SSH session alive while the app is backgrounded.
+- Two real (non-WASM) options exist once raw sockets are required; the choice is a
+  genuine engineering trade-off, not a default, and should be made deliberately when
+  Android work actually starts:
+
+  **Option A — .NET for Android (MAUI) hosting the same Kestrel+SSH.NET backend
+  natively**, with an in-app `WebView` pointed at it instead of the desktop model of
+  opening the user's own external browser.
+  - *Pro:* reuses the existing backend and the React/Tailwind/xterm.js front-end
+    completely unchanged — one business-logic codebase (SSH, SFTP, vault, sync) shared
+    across desktop and Android.
+  - *Con:* bundles the Mono/.NET Android runtime into the APK (noticeably bigger app),
+    and Android-native concerns (foreground-service lifecycle, Doze/battery-optimization
+    exemptions, hardware-backed Keystore, biometric unlock) go through MAUI's bindings
+    rather than the platform APIs directly.
+
+  **Option B — a native Android app (Kotlin) that re-implements just the backend**:
+  an SSH/SFTP client (e.g. `sshj`, since JSch is unmaintained) plus a small embedded
+  HTTP/WebSocket server (Ktor or NanoHTTPD) driving a `WebView` — still reusing the
+  React/Tailwind/xterm.js front-end unchanged, since that talks a plain HTTP/WS
+  protocol either backend can implement.
+  - *Pro:* smaller APK, idiomatic Android platform integration (foreground services,
+    Doze exemptions, hardware-backed Keystore, `BiometricPrompt`) without a
+    cross-platform framework in the way.
+  - *Con, and this is the deciding risk:* the SSH/vault/sync **business logic gets
+    forked into a second, independently-maintained implementation**. Every bugfix and
+    protocol nuance has to land twice. Worse, the encrypted vault format (AES-GCM +
+    Argon2id) must produce byte-compatible ciphertext between the C# and Kotlin
+    implementations, or a phone and a laptop literally cannot sync the same vault —
+    that cross-implementation compatibility would need explicit shared test vectors
+    from day one, not an afterthought.
+
+  Default to **Option A** unless Android-native polish (battery life, app size,
+  Keystore-backed key storage) proves to matter enough to justify maintaining two
+  backend implementations in lockstep.
 - Treat Android as a later milestone (after desktop M0–M5), not something to design the
-  backend around now — but keep this constraint in mind: don't take a dependency on
-  anything (reflection-heavy patterns are fine here, WASI/browser API assumptions are
-  not) that would foreclose the MAUI/WebView route later.
+  desktop backend around now — but keep this constraint in mind either way: don't take a
+  dependency on anything (reflection-heavy patterns are fine, WASI/browser-API-only
+  assumptions are not) that would foreclose either Android route later.
 
 ## Security
 
