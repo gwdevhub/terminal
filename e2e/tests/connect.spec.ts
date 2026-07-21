@@ -40,7 +40,7 @@ test('connects over SSH and shows live shell output', async ({ page }) => {
     expect(await terminalText(page)).toContain(marker)
   }).toPass({ timeout: 10_000 })
 
-  await page.click('button:has-text("Disconnect")')
+  await page.getByRole('button', { name: `Close ${ctx.sshUsername}@${ctx.sshHost}` }).click()
   await expect(page.locator('#host')).toBeVisible()
 })
 

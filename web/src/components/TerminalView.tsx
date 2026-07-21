@@ -6,11 +6,15 @@ import { terminalSocketUrl } from '../lib/api'
 
 interface TerminalViewProps {
   sessionId: string
-  onClose: () => void
+  isActive: boolean
 }
 
-export function TerminalView({ sessionId, onClose }: TerminalViewProps) {
+// Renders only the terminal itself - the tab strip (App.tsx/TabBar.tsx) owns the
+// session label and close/disconnect action now that multiple sessions can be open at
+// once (issue #9), so a second "Session xxx / Disconnect" header here would be redundant.
+export function TerminalView({ sessionId, isActive }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const termRef = useRef<Terminal | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -25,6 +29,7 @@ export function TerminalView({ sessionId, onClose }: TerminalViewProps) {
     term.loadAddon(fitAddon)
     term.open(container)
     fitAddon.fit()
+    termRef.current = term
 
     const socket = new WebSocket(terminalSocketUrl(sessionId))
     socket.binaryType = 'arraybuffer'
@@ -54,22 +59,17 @@ export function TerminalView({ sessionId, onClose }: TerminalViewProps) {
       dataDisposable.dispose()
       socket.close()
       term.dispose()
+      termRef.current = null
     }
   }, [sessionId])
 
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-900 px-3 py-2">
-        <span className="truncate text-sm text-slate-300">Session {sessionId.slice(0, 8)}</span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded bg-slate-800 px-3 py-1 text-sm text-slate-200 hover:bg-slate-700"
-        >
-          Disconnect
-        </button>
-      </div>
-      <div ref={containerRef} className="min-h-0 flex-1 bg-black p-1 sm:p-2" />
-    </div>
-  )
+  // Re-focus when this tab becomes the active one - it stays mounted-but-hidden while
+  // inactive (see App.tsx), so nothing else would move focus back into it on tab switch.
+  useEffect(() => {
+    if (isActive) {
+      termRef.current?.focus()
+    }
+  }, [isActive])
+
+  return <div ref={containerRef} className="h-full bg-black p-1 sm:p-2" />
 }
