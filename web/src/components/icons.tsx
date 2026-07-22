@@ -37,17 +37,6 @@ export function KeychainIcon(props: IconProps) {
   )
 }
 
-export function PortForwardingIcon(props: IconProps) {
-  return (
-    <svg {...base} {...props}>
-      <polyline points="4,8 20,8" />
-      <polyline points="16,4 20,8 16,12" />
-      <polyline points="20,16 4,16" />
-      <polyline points="8,12 4,16 8,20" />
-    </svg>
-  )
-}
-
 export function SnippetsIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>
@@ -55,15 +44,6 @@ export function SnippetsIcon(props: IconProps) {
       <rect x="9" y="2" width="6" height="4" rx="1" />
       <line x1="8" y1="11" x2="16" y2="11" />
       <line x1="8" y1="15" x2="16" y2="15" />
-    </svg>
-  )
-}
-
-export function KnownHostsIcon(props: IconProps) {
-  return (
-    <svg {...base} {...props}>
-      <path d="M12 6 C10 4.5 6 4 3 4.5 V18.5 C6 18 10 18.5 12 20 C14 18.5 18 18 21 18.5 V4.5 C18 4 14 4.5 12 6 Z" />
-      <line x1="12" y1="6" x2="12" y2="20" />
     </svg>
   )
 }
