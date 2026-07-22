@@ -1,0 +1,38 @@
+# A ready-to-run environment for testing the Windows build under Wine - the mandatory
+# step from AGENTS.md's Testing section whenever server/ code changes ("build the
+# win-x64 exe and run it under Wine before considering the change done"). Bundles
+# everything that step needs so it never has to be reinstalled from scratch: the .NET
+# SDK (to publish win-x64), Node (to build the React UI first), and Wine + Xvfb (to
+# actually run the published exe - the tray icon needs a virtual display).
+#
+# This is a dev/test tool, not a distributable artifact - it doesn't bake the repo in,
+# mount your checkout as a volume instead:
+#
+#   docker build -f Dockerfile.wine-test -t slopterm-wine-test .
+#   docker run --rm -it -v "$(pwd)":/workspace -w /workspace slopterm-wine-test
+#
+# That drops into a shell with Xvfb already running and DISPLAY set, ready for:
+#
+#   cd web && npm ci && npm run build && cd ../server
+#   dotnet publish -c Release -r win-x64
+#   wine bin/Release/net8.0/win-x64/publish/Slopterm.Server.exe
+
+FROM mcr.microsoft.com/dotnet/sdk:8.0
+
+# Node.js, matching the version CI uses (see .github/workflows/ci.yml).
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Wine needs the i386 architecture enabled for its 32-bit components even on a 64-bit
+# host; Xvfb provides the virtual display Wine's tray icon window needs to attach to.
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends wine xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/wine-test-entrypoint.sh /usr/local/bin/wine-test-entrypoint.sh
+RUN chmod +x /usr/local/bin/wine-test-entrypoint.sh
+
+ENTRYPOINT ["wine-test-entrypoint.sh"]
+CMD ["bash"]

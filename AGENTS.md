@@ -350,6 +350,11 @@ spirit of Termius, targeting Linux, macOS and Windows.
   Diffie-Hellman (`KexAlgorithms diffie-hellman-group14-sha256` in a throwaway `sshd`
   config) - if a modern target server doesn't offer that, verifying the ECDH path itself
   currently requires real Windows.
+- **`Dockerfile.wine-test`** packages everything the Wine-testing step above needs (.NET
+  SDK, Node, Wine, Xvfb) so it never has to be reinstalled from scratch on a fresh
+  machine/sandbox - mount a checkout as a volume and it drops into a shell with Xvfb
+  already running and `DISPLAY` set (see README.md's "Testing the Windows build under
+  Wine" section for the exact commands). Dev/test tool only, doesn't bake the repo in.
 
 ## Workflow
 
