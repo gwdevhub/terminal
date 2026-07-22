@@ -1,5 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { getSettings, setRequireMasterPassword } from '../lib/api'
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import {
+  exportVaultBackup,
+  getSettings,
+  importVaultBackup,
+  resetVaultToDefault,
+  setRequireMasterPassword,
+} from '../lib/api'
 
 const inputClasses =
   'w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 focus:border-slate-400 focus:outline-none'
@@ -11,9 +17,78 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
+  const importFileInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     getSettings().then((s) => setRequireMasterPasswordState(s.requireMasterPassword))
   }, [])
+
+  async function handleExport() {
+    setExportError(null)
+    try {
+      const blob = await exportVaultBackup()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `slopterm-vault-backup-${new Date().toISOString().slice(0, 10)}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Failed to export backup')
+    }
+  }
+
+  function handleImportClick() {
+    importFileInputRef.current?.click()
+  }
+
+  async function handleImportFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    const confirmed = window.confirm(
+      'Importing a backup replaces your current vault entirely - hosts, snippets, Keychain ' +
+        'entries, logs, and settings - with whatever is in the file. This cannot be undone. Continue?',
+    )
+    if (!confirmed) return
+
+    setImportBusy(true)
+    setImportError(null)
+    try {
+      await importVaultBackup(file)
+      // Vault existence/lock-state/settings all changed under the app's feet - reload
+      // so every component (VaultGate, this page's own state, etc.) re-fetches fresh
+      // instead of trying to patch a dozen pieces of now-stale client state by hand.
+      window.location.reload()
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Failed to import backup')
+      setImportBusy(false)
+    }
+  }
+
+  async function handleReset() {
+    const confirmed = window.confirm(
+      'This permanently deletes every saved host, snippet, Keychain entry, and log, and ' +
+        'resets Settings to default. This cannot be undone. Reset everything?',
+    )
+    if (!confirmed) return
+
+    setResetBusy(true)
+    setResetError(null)
+    try {
+      await resetVaultToDefault()
+      window.location.reload()
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : 'Failed to reset')
+      setResetBusy(false)
+    }
+  }
 
   function handleToggleClick() {
     setError(null)
@@ -106,6 +181,52 @@ export function SettingsPage() {
           </div>
         </form>
       )}
+
+      <div className="flex flex-col gap-3 border-t border-slate-800 pt-4">
+        <h3 className="font-medium text-slate-100">Backup</h3>
+        <p className="text-sm text-slate-400">
+          Export your vault to move it to another machine or keep a copy somewhere safe.
+          The export is still encrypted the same way it is on disk - nothing is decrypted
+          in the process.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            Export backup
+          </button>
+          <button
+            type="button"
+            onClick={handleImportClick}
+            disabled={importBusy}
+            className="rounded bg-slate-800 px-4 py-2 text-sm text-slate-300 hover:bg-slate-700 disabled:opacity-50"
+          >
+            {importBusy ? 'Importing…' : 'Import backup'}
+          </button>
+          <input ref={importFileInputRef} type="file" accept=".zip" className="hidden" onChange={handleImportFile} />
+        </div>
+        {exportError && <p className="text-sm text-red-400">{exportError}</p>}
+        {importError && <p className="text-sm text-red-400">{importError}</p>}
+      </div>
+
+      <div className="flex flex-col gap-3 border-t border-red-900/50 pt-4">
+        <h3 className="font-medium text-red-400">Danger zone</h3>
+        <p className="text-sm text-slate-400">
+          Permanently delete every saved host, snippet, Keychain entry, and log, and reset
+          Settings to default.
+        </p>
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={resetBusy}
+          className="self-start rounded border border-red-800 bg-red-950/40 px-4 py-2 text-sm font-medium text-red-300 hover:bg-red-950 disabled:opacity-50"
+        >
+          {resetBusy ? 'Resetting…' : 'Reset everything to default'}
+        </button>
+        {resetError && <p className="text-sm text-red-400">{resetError}</p>}
+      </div>
     </div>
   )
 }

@@ -202,6 +202,40 @@ app.MapPost("/api/settings/require-master-password", (SetRequireMasterPasswordRe
     }
 });
 
+app.MapGet("/api/vault/export", () =>
+{
+    try
+    {
+        var bytes = vault.ExportBackup();
+        return Results.File(bytes, "application/zip", $"slopterm-vault-backup-{DateTimeOffset.UtcNow:yyyy-MM-dd}.zip");
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/vault/import", async (HttpRequest request) =>
+{
+    try
+    {
+        using var ms = new MemoryStream();
+        await request.Body.CopyToAsync(ms);
+        vault.ImportBackup(ms.ToArray());
+        return Results.NoContent();
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/vault/reset", () =>
+{
+    vault.ResetToDefault();
+    return Results.NoContent();
+});
+
 app.MapGet("/api/vault/hosts", () =>
 {
     try

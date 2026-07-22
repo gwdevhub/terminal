@@ -130,9 +130,11 @@ spirit of Termius, targeting Linux, macOS and Windows.
     best-effort posture as the Keychain lookup: a failed/locked-vault fetch just means the
     section renders nothing, it never blocks Quick Connect.
   - **Settings (`SettingsPage.tsx`, gear icon pinned to the bottom of `NavRail`) - master
-    password is optional.** What "optional" actually means cryptographically: when
-    disabled, the vault auto-unlocks at startup (`VaultService.EnsureUnlockedIfPasswordNotRequired`,
-    called once in `Program.cs` right after constructing `VaultService`) using a **fixed,
+    password is optional, and off by default.** A brand-new install never shows an
+    unlock/setup prompt at all - `AppSettings.RequireMasterPassword` defaults to `false`,
+    so `EnsureUnlockedIfPasswordNotRequired` auto-creates and auto-unlocks the vault on
+    first launch. What "optional" actually means cryptographically: when disabled, the
+    vault auto-unlocks using a **fixed,
     non-secret** key-derivation input (`VaultCrypto.NoPasswordSeed`, a public constant in
     this open-source code) instead of a real password. The vault is still AES-GCM
     encrypted at rest, so this still protects against casually opening the files in a
@@ -147,11 +149,36 @@ spirit of Termius, targeting Linux, macOS and Windows.
     *current* password first (checked via a `TryDeriveAndVerify` helper shared with
     `Unlock`), so someone can't disable protection without already knowing the secret
     they're removing.
-  - Auto-unlock only runs **once, at process startup** - there's currently no UI path
-    that ever calls the existing `/api/vault/lock` endpoint mid-session (verified by
-    grepping the frontend before relying on this), so this is sufficient for every real
-    flow today. If a manual "Lock" action is ever added, it would need to also re-trigger
-    auto-unlock when appropriate, not just once at boot.
+  - Auto-unlock runs at process startup, and again after `ImportBackup`/`ResetToDefault`
+    (both can change whether a password is required out from under the running process,
+    unlike a plain toggle which already re-keys in place) - there's still no UI path that
+    ever calls the existing `/api/vault/lock` endpoint mid-session otherwise (verified by
+    grepping the frontend), so those three call sites are sufficient for every real flow
+    today. If a manual "Lock" action is ever added, it would need to also re-trigger
+    auto-unlock when appropriate.
+  - **Backup export/import (`VaultService.ExportBackup`/`ImportBackup`, Settings'
+    "Backup" section):** zips up `vault.json` + `settings.json` + every record file
+    exactly as they sit on disk - already-encrypted bytes, so export never needs the
+    vault unlocked (zero-knowledge: the backend doesn't need the key either).
+    `settings.json` travels with the backup on purpose, so an imported vault's "requires
+    a password" state always matches how its records were actually encrypted, instead of
+    being silently overridden by whatever the importing machine's own local settings
+    said. Import extracts into a temp staging directory and validates every entry
+    resolves inside it before touching the real vault directory at all (guards against
+    zip-slip path traversal from a corrupt/malicious upload), then atomically swaps it in
+    via `Directory.Move`. Forces a lock first (the in-memory key almost certainly doesn't
+    match the newly imported vault.json), then immediately re-runs
+    `EnsureUnlockedIfPasswordNotRequired` so an imported no-password vault auto-unlocks
+    right away rather than sitting locked until the next restart.
+  - **Reset to default (`VaultService.ResetToDefault`, Settings' "Danger zone"):** wipes
+    the vault directory entirely (every host/snippet/keychain entry/log, plus
+    `settings.json`) and re-runs `EnsureUnlockedIfPasswordNotRequired`, landing back in
+    the exact state a brand-new install starts in. Deliberately does **not** require the
+    vault to already be unlocked - this is the recovery path for someone who's locked
+    themselves out of their own master password, so requiring it first would defeat the
+    entire point. The frontend's confirmation is a plain `window.confirm()`, not a
+    password re-check - matches what was actually asked for (an "are you sure" gate), not
+    an additional server-side authorization boundary.
   - Verified the full re-key lifecycle (toggle off, restart, toggle back on with a new
     password, confirm the old one is rejected and data survives throughout) on both Linux
     and win-x64 under Wine per the Testing section's rule - this exercises the same

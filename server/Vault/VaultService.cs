@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -169,6 +170,134 @@ public sealed class VaultService
 
         WriteMetadata(newSalt, newKey);
         _key = newKey;
+    }
+
+    /// <summary>
+    /// Packages vault.json, settings.json, and every record file into a zip - the whole
+    /// point is that it's just already-encrypted bytes copied as-is, so exporting never
+    /// needs the vault to be unlocked (zero-knowledge: the backend doesn't need the key
+    /// either). settings.json is included so an imported vault's "requires a password"
+    /// state always matches how its records were actually encrypted, rather than being
+    /// silently overridden by whatever the importing machine's local settings said.
+    /// </summary>
+    public byte[] ExportBackup()
+    {
+        if (!Exists)
+        {
+            throw new InvalidOperationException("No vault exists yet to export.");
+        }
+
+        using var ms = new MemoryStream();
+        using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            archive.CreateEntryFromFile(_metadataPath, "vault.json");
+            if (File.Exists(_settingsPath))
+            {
+                archive.CreateEntryFromFile(_settingsPath, "settings.json");
+            }
+
+            if (Directory.Exists(_vaultDir))
+            {
+                foreach (var dir in Directory.EnumerateDirectories(_vaultDir))
+                {
+                    var subfolder = Path.GetFileName(dir);
+                    foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+                    {
+                        archive.CreateEntryFromFile(file, $"{subfolder}/{Path.GetFileName(file)}");
+                    }
+                }
+            }
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Replaces the entire vault directory with the contents of a previously exported
+    /// backup. Extracts into a temp staging directory first and validates every entry
+    /// resolves inside it (guards against a corrupt/malicious zip using "../" path
+    /// traversal - a.k.a. zip slip) before touching the real vault directory at all, so a
+    /// bad upload can't leave the vault half-replaced. Locks first (the in-memory key
+    /// almost certainly doesn't match the newly imported vault.json), then immediately
+    /// re-runs EnsureUnlockedIfPasswordNotRequired so an imported vault that doesn't
+    /// require a password auto-unlocks right away instead of sitting locked until the
+    /// next full app restart.
+    /// </summary>
+    public void ImportBackup(byte[] zipBytes)
+    {
+        using var ms = new MemoryStream(zipBytes);
+        using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+
+        // Staged as a *sibling* of the vault directory (not the system temp directory) so
+        // the final Directory.Move below is guaranteed to land on the same filesystem -
+        // Directory.Move throws (Linux: "Invalid cross-device link") if the source and
+        // destination are on different volumes, which the system temp dir isn't
+        // guaranteed to share with wherever the vault directory actually lives.
+        var stagingParent = Path.GetDirectoryName(Path.GetFullPath(_vaultDir)) ?? Path.GetTempPath();
+        var stagingDir = Path.Combine(stagingParent, ".slopterm-import-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(stagingDir);
+        var fullStagingDir = Path.GetFullPath(stagingDir);
+
+        try
+        {
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    continue; // directory entry
+                }
+
+                var destPath = Path.GetFullPath(Path.Combine(stagingDir, entry.FullName));
+                if (!destPath.StartsWith(fullStagingDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("Backup contains an invalid file path.");
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                entry.ExtractToFile(destPath, overwrite: true);
+            }
+
+            if (!File.Exists(Path.Combine(stagingDir, "vault.json")))
+            {
+                throw new InvalidOperationException("Not a valid slopterm vault backup - missing vault.json.");
+            }
+
+            Lock();
+            if (Directory.Exists(_vaultDir))
+            {
+                Directory.Delete(_vaultDir, recursive: true);
+            }
+
+            Directory.Move(stagingDir, _vaultDir);
+        }
+        finally
+        {
+            if (Directory.Exists(stagingDir))
+            {
+                Directory.Delete(stagingDir, recursive: true);
+            }
+        }
+
+        EnsureUnlockedIfPasswordNotRequired();
+    }
+
+    /// <summary>
+    /// Wipes the vault directory entirely (every host/snippet/keychain entry/log, plus
+    /// settings.json) and returns to the exact state a brand-new install starts in -
+    /// including re-running EnsureUnlockedIfPasswordNotRequired so a default install ends
+    /// up auto-unlocked again immediately, not just "no vault at all." Deliberately does
+    /// NOT require the vault to already be unlocked - this is the recovery path for
+    /// someone who's locked themselves out and just wants to start fresh.
+    /// </summary>
+    public void ResetToDefault()
+    {
+        Lock();
+        if (Directory.Exists(_vaultDir))
+        {
+            Directory.Delete(_vaultDir, recursive: true);
+        }
+
+        EnsureUnlockedIfPasswordNotRequired();
     }
 
     private void WriteMetadata(byte[] salt, byte[] key)

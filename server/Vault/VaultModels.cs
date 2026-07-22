@@ -90,5 +90,8 @@ public sealed class LogEntryRecord
 /// </summary>
 public sealed class AppSettings
 {
-    public bool RequireMasterPassword { get; set; } = true;
+    // Off by default - a brand-new install auto-unlocks immediately with no prompt at
+    // all (see VaultService.EnsureUnlockedIfPasswordNotRequired). Users who want real
+    // protection opt in via the Settings page.
+    public bool RequireMasterPassword { get; set; }
 }
