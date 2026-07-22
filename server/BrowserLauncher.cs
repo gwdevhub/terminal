@@ -45,6 +45,17 @@ public static class BrowserLauncher
 
                 var psi = new ProcessStartInfo(path) { UseShellExecute = false };
                 psi.ArgumentList.Add($"--app={url}");
+
+                // Restores the window to wherever it was last moved/resized to (see
+                // WindowPositionStore) - the frontend persists this itself, there's no
+                // API for us to read an already-open window's live bounds back out.
+                var saved = WindowPositionStore.Load();
+                if (saved is not null)
+                {
+                    psi.ArgumentList.Add($"--window-position={saved.X},{saved.Y}");
+                    psi.ArgumentList.Add($"--window-size={saved.Width},{saved.Height}");
+                }
+
                 Process.Start(psi);
                 return true;
             }

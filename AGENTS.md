@@ -277,6 +277,24 @@ spirit of Termius, targeting Linux, macOS and Windows.
   installed there, the registry lookup correctly finds nothing and falls through to the
   existing fallback without crashing the server (Wine's own "no suitable app to open
   this URL" message is expected there, not a regression - same as before this change).
+- **Remembers window position/size (`WindowPositionStore.cs`, `window.json`):** the
+  frontend (`App.tsx`'s `useRememberWindowPosition`) polls
+  `screenX`/`screenY`/`outerWidth`/`outerHeight` every few seconds (also on
+  `beforeunload`) and reports changes via `navigator.sendBeacon` - there's no "window
+  moved" event on the web platform, and JS can't reposition the *current* top-level
+  window after the fact anyway, so this only ever affects the *next* launch.
+  `BrowserLauncher` reads the saved position back and passes Chrome/Edge/Brave's
+  `--window-position=x,y --window-size=w,h` flags when launching the app-mode window.
+  Plain JSON, not encrypted (screen coordinates aren't sensitive) - lives alongside
+  `vault.json`/`settings.json` but isn't itself vault content, so it's naturally excluded
+  from `VaultService.ExportBackup` (a backup shouldn't force one machine's window layout
+  onto another's), though `ResetToDefault` does still wipe it along with everything else.
+  This is a stopgap within the current browser-launching architecture, not the full ask -
+  true single-instance ("clicking the tray icon focuses the existing window instead of
+  opening a new one") still isn't solved here, since that requires owning the actual
+  window handle. A Photino-based rewrite (in progress) replaces this entirely with a
+  native window whose Move/Resize/Closing events make both single-instance and geometry
+  persistence straightforward.
 - Implemented via raw Win32 P/Invoke (`RegisterClassEx`/`CreateWindowEx` for a hidden
   `HWND_MESSAGE`-parented window + `Shell_NotifyIcon`), not WinForms/WPF/Avalonia or a
   third-party tray package - see issue #17's reasoning (zero added dependencies/weight,

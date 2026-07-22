@@ -250,3 +250,17 @@ export async function resetVaultToDefault(): Promise<void> {
   const res = await fetch('/api/vault/reset', { method: 'POST' })
   await throwOnError(res)
 }
+
+export interface WindowPosition {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+// No throwOnError here on purpose - saving the window position is a best-effort
+// convenience (via navigator.sendBeacon, see App.tsx), never worth surfacing an error
+// for.
+export async function saveWindowPosition(position: WindowPosition): Promise<void> {
+  navigator.sendBeacon('/api/window-position', new Blob([JSON.stringify(position)], { type: 'application/json' }))
+}

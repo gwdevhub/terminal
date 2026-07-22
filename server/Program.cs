@@ -183,6 +183,12 @@ app.MapPost("/api/vault/lock", () =>
     return Results.NoContent();
 });
 
+app.MapPost("/api/window-position", (WindowPosition position) =>
+{
+    WindowPositionStore.Save(position);
+    return Results.NoContent();
+});
+
 app.MapGet("/api/settings", () => Results.Ok(vault.GetSettings()));
 
 app.MapPost("/api/settings/require-master-password", (SetRequireMasterPasswordRequest request) =>

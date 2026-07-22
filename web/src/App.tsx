@@ -1,10 +1,38 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AppShell } from './components/AppShell'
 import { TabBar, type SessionTab } from './components/TabBar'
 import { TerminalView } from './components/TerminalView'
-import { connect, disconnect, type ConnectRequest } from './lib/api'
+import { connect, disconnect, saveWindowPosition, type ConnectRequest } from './lib/api'
+
+// Browsers don't expose a "window moved" event, and JS can't reposition the current
+// top-level window after the fact anyway (only the launcher can, via Chrome/Edge's
+// --window-position/--window-size flags - see server/BrowserLauncher.cs) - so this just
+// periodically checks screenX/screenY/outerWidth/outerHeight and reports changes,
+// relying on the *next* launch to actually apply them, not this session.
+function useRememberWindowPosition() {
+  useEffect(() => {
+    let lastSent = ''
+
+    function captureAndSave() {
+      const position = { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight }
+      const json = JSON.stringify(position)
+      if (json === lastSent) return
+      lastSent = json
+      saveWindowPosition(position)
+    }
+
+    captureAndSave()
+    const interval = setInterval(captureAndSave, 3000)
+    window.addEventListener('beforeunload', captureAndSave)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('beforeunload', captureAndSave)
+    }
+  }, [])
+}
 
 function App() {
+  useRememberWindowPosition()
   const [tabs, setTabs] = useState<SessionTab[]>([])
   // null = the "new connection" view (AppShell) is showing, not any particular tab.
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
