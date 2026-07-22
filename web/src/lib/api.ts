@@ -230,3 +230,23 @@ export async function setRequireMasterPassword(
   await throwOnError(res)
   return res.json()
 }
+
+export async function exportVaultBackup(): Promise<Blob> {
+  const res = await fetch('/api/vault/export')
+  await throwOnError(res)
+  return res.blob()
+}
+
+export async function importVaultBackup(file: File): Promise<void> {
+  const res = await fetch('/api/vault/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  })
+  await throwOnError(res)
+}
+
+export async function resetVaultToDefault(): Promise<void> {
+  const res = await fetch('/api/vault/reset', { method: 'POST' })
+  await throwOnError(res)
+}

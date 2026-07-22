@@ -13,7 +13,19 @@ test('toggling "require master password" off and back on re-keys the vault corre
   await ensureVaultUnlocked(page)
 
   await gotoSection(page, 'Settings')
-  await expect(page.getByRole('button', { name: 'Enabled' })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('Loading settings')).not.toBeVisible({ timeout: 10_000 })
+
+  // Master password protection is off by default - no other test file touches
+  // /api/settings/require-master-password, so if it's already "Enabled" here it must
+  // have been left that way by a previous run of this same test; if it's "Disabled"
+  // (the normal case), turn it on with the shared password first so the rest of this
+  // test can exercise the disable/re-enable toggle from a known starting point.
+  if (await page.getByRole('button', { name: 'Disabled' }).isVisible().catch(() => false)) {
+    await page.click('button:has-text("Disabled")')
+    await page.fill('#settings-password', E2E_VAULT_PASSWORD)
+    await page.click('button:has-text("Enable")')
+    await expect(page.getByRole('button', { name: 'Enabled' })).toBeVisible({ timeout: 10_000 })
+  }
 
   // Wrong current password must be rejected and leave protection enabled.
   await page.click('button:has-text("Enabled")')
@@ -59,22 +71,15 @@ test('toggling "require master password" off and back on re-keys the vault corre
   }, newPassword)
   expect(newPasswordWorks).toBe(true)
 
-  // Restore the shared master password - every e2e test file uses the same server/vault
-  // for the whole suite run (see vault-helpers.ts), so leaving it on newPassword would
-  // break any test file that runs after this one.
-  await page.evaluate(
-    async ([current, restored]) => {
-      await fetch('/api/settings/require-master-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ required: false, currentPassword: current }),
-      })
-      await fetch('/api/settings/require-master-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ required: true, newPassword: restored }),
-      })
-    },
-    [newPassword, E2E_VAULT_PASSWORD],
-  )
+  // Restore the shared default (protection off) - every e2e test file uses the same
+  // server/vault for the whole suite run (see vault-helpers.ts), and every other test
+  // file's ensureVaultUnlocked() call expects the no-prompt, auto-unlocked default, not
+  // a lingering "Enabled" state left over from this test.
+  await page.evaluate(async (current) => {
+    await fetch('/api/settings/require-master-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ required: false, currentPassword: current }),
+    })
+  }, newPassword)
 })
