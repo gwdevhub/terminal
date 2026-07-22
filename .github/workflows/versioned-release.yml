@@ -1,0 +1,104 @@
+name: Versioned Release
+
+# Builds native executables and publishes a proper, numbered GitHub Release - distinct
+# from release.yml's rolling "latest" dev build. Bump the VERSION file at the repo root
+# and merge to main to cut the next release; this workflow reads that file for the tag
+# and title. Only linux-x64/win-x64 for now (macOS can be added to the matrix later the
+# same way release.yml already covers all four RIDs). Re-running for a version that
+# already has a release just replaces its assets rather than failing, so a fixed build
+# can be re-uploaded without bumping VERSION again.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'VERSION'
+  workflow_dispatch:
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+            binary: Slopterm.Server.exe
+            asset: slopterm-win-x64.exe
+          - rid: linux-x64
+            os: ubuntu-latest
+            binary: Slopterm.Server
+            asset: slopterm-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build front-end
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish self-contained single-file backend
+        working-directory: server
+        run: dotnet publish -c Release -r ${{ matrix.rid }}
+
+      - name: Rename to a friendly asset name
+        shell: bash
+        run: cp "server/bin/Release/net8.0/${{ matrix.rid }}/publish/${{ matrix.binary }}" "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create or update the versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          PRERELEASE_FLAG=""
+          case "$VERSION" in
+            *beta*|*alpha*|*rc*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --repo "${{ github.repository }}" \
+              --title "slopterm $VERSION" \
+              --notes "slopterm $VERSION. Download the file for your OS and run it directly - everything is packaged inside." \
+              $PRERELEASE_FLAG
+          fi

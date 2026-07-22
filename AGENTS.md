@@ -108,8 +108,17 @@ spirit of Termius, targeting Linux, macOS and Windows.
   to the exe. `dotnet publish` produces one file with genuinely everything in it.
   `.github/workflows/release.yml` builds this for every OS on every push to `main` and
   publishes them as assets on a rolling `latest` GitHub Release (also runnable on demand
-  via `workflow_dispatch`) - that release is the place to grab a build, not a manual
-  local publish.
+  via `workflow_dispatch`) - that release is the place to grab a bleeding-edge build, not
+  a manual local publish.
+- **Numbered releases** come from a separate workflow,
+  `.github/workflows/versioned-release.yml`, keyed off the `VERSION` file at the repo
+  root (currently `linux-x64`/`win-x64` only - add RIDs to its matrix the same way
+  `release.yml` covers all four when macOS numbered releases are needed). Bump `VERSION`
+  and merge to main to cut the next release (tag `v<version>`, title/notes from the same
+  string); a version containing `beta`/`alpha`/`rc` is marked a GitHub pre-release
+  automatically. Also runnable via `workflow_dispatch` (e.g. to cut a release from a
+  branch before merging, or to re-upload assets for a version whose build needed a fix -
+  re-running for an existing tag replaces its assets instead of failing).
 - `EnableCompressionInSingleFile` is on - a free, safe ~51% size cut (verified: ~98MB to
   ~48MB on win-x64) with no functional risk, just a self-extraction step into a temp dir
   on first run each launch.
