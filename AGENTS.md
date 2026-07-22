@@ -19,11 +19,14 @@ spirit of Termius, targeting Linux, macOS and Windows.
 - **App shell (implemented, `web/src/App.tsx` + `Sidebar`/`HostGrid`/`HostDetailsPanel`/
   `HostsSection`/`SectionContent`):** the Termius-reference layout (issues #8/#10), now
   restructured so the sidebar is always visible instead of living inside a "new
-  connection" view. `Sidebar.tsx` renders Hosts/Keychain/Port Forwarding/Snippets/Known
-  Hosts/Logs/Settings (Hosts, Keychain, Snippets and Logs are functional, the rest are
-  "coming soon" placeholders via `SectionContent.tsx`'s `COMING_SOON` map) - there is no
-  "Quick Connect" nav item anymore; every connection now starts from a saved Host (see
-  below). On desktop/tablet it's a persistent left column with a collapse toggle at its
+  connection" view. `Sidebar.tsx` renders Hosts/Keychain/Snippets/Logs/Settings, all
+  functional - there is no "Quick Connect" nav item anymore; every connection now starts
+  from a saved Host (see below). Port Forwarding and Known Hosts were removed outright
+  (not just hidden) rather than kept as "coming soon" placeholders indefinitely - neither
+  had a real implementation behind them, and there's no near-term plan to add one; add
+  them back properly (nav entry, icon, `SectionContent` case, and an actual feature) if
+  that changes, rather than resurrecting a placeholder. On desktop/tablet it's a
+  persistent left column with a collapse toggle at its
   top (fixed-height header row, deliberately the same height as `TabBar`'s row so the two
   align as one continuous toolbar) that shrinks it to icons-only - collapsed state is
   plain component state, not persisted, so it always starts expanded (this also keeps
