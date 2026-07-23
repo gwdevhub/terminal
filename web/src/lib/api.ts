@@ -57,6 +57,7 @@ export interface HostRecord {
   port: number
   parentGroupId?: string | null
   credentials: CredentialRecord[]
+  startupSnippetIds?: string[]
 }
 
 export interface SavedHost {
@@ -275,6 +276,7 @@ export interface OpenTabRecord {
   authMethod: 'password' | 'privateKey'
   secret?: string
   passphrase?: string
+  startupCommands?: string[]
 }
 
 export interface OpenTabsRecord {

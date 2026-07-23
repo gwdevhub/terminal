@@ -248,6 +248,27 @@ spirit of Termius, targeting Linux, macOS and Windows.
     only renders `SectionContent` when `activeTabId` is null), so there's no terminal
     visible to inject into while this section is showing. Direct injection is a natural
     follow-up if the section content and an open session ever coexist on screen.
+  - **Startup snippets per host** (`HostRecord.StartupSnippetIds`, `ConnectionForm.tsx`'s
+    checklist for new hosts, `HostDetailsPanel.tsx`'s for existing ones): a saved host can
+    have one or more Snippets attached, sent to the shell in order right after that host's
+    SSH tab connects (`TerminalView.tsx`, on the WebSocket's `open` event) - the intended
+    use is env vars/setup commands you'd otherwise type by hand every time. Only ids, not
+    a snapshot of the command text, are stored on the host - `lib/hosts.ts`'s
+    `resolveStartupCommands` looks the current command text up fresh from the live
+    Snippets list at connect time (an id whose snippet was deleted is silently skipped),
+    so editing a snippet later is reflected on the *next* connect without needing to
+    re-attach it. The resolved command *text* (not ids) is what actually travels with the
+    tab from there on - `SessionTab.startupCommands`, and `OpenTabRecord.StartupCommands`
+    for a restored/reconnected tab - matching how `RecentConnectionRecord`/`OpenTabRecord`
+    already snapshot a credential rather than re-resolving a live reference on every
+    reconnect. A 300ms guard delay before the first command (and between each one) lets
+    the shell's own banner/prompt print first, rather than racing it. Editing an
+    already-saved host's attachments happens inline in `HostDetailsPanel`'s "view" mode
+    (checkboxes save immediately via the `PUT /api/vault/hosts/{id}` endpoint) - and the
+    field is also carried through the general edit-host flow added alongside it (see the
+    "Shared connect/host form" bullet's `edit` mode), so re-saving a host from that form
+    preserves its snippet attachments rather than clearing them (`hostToFormValues`/
+    `formValuesToHost` round-trip `startupSnippetIds`).
   - **Logs** (`LogsSection.tsx`, `logs/{id}.json`): an append-only record of connection
     attempts (`connected`/`connect_failed`/`disconnected`), written by `Program.cs`
     whenever `/api/ssh/connect` succeeds/fails and whenever a session is actually removed

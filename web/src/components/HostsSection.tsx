@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import {
   getHostShareToken,
   listHosts,
+  listSnippets,
   upsertRecentConnection,
   type ConnectRequest,
   type SavedHost,
   type SavedRecentConnection,
+  type SavedSnippet,
 } from '../lib/api'
-import { resolveConnectRequest, resolveRecentConnectRequest } from '../lib/hosts'
+import { resolveConnectRequest, resolveRecentConnectRequest, resolveStartupCommands } from '../lib/hosts'
 import { VaultGate } from './VaultGate'
 import { HostGrid } from './HostGrid'
 import { HostDetailsPanel } from './HostDetailsPanel'
@@ -19,7 +21,7 @@ import { ShareTokenModal } from './ShareTokenModal'
 import type { ConnectionFormValues } from './ConnectionForm'
 
 interface HostsSectionProps {
-  onConnect: (request: ConnectRequest) => Promise<boolean>
+  onConnect: (request: ConnectRequest, startupCommands?: string[]) => Promise<boolean>
   onConnectSftp: (request: ConnectRequest, label: string) => Promise<boolean>
   errorMessage: string | null
   isConnecting: boolean
@@ -27,6 +29,7 @@ interface HostsSectionProps {
 
 export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnecting }: HostsSectionProps) {
   const [hosts, setHosts] = useState<SavedHost[]>([])
+  const [snippets, setSnippets] = useState<SavedSnippet[]>([])
   const [selection, setSelection] = useState<'none' | 'new' | string>('none')
   // Whether the selected host is showing in edit mode (vs. read-only details). Kept
   // separate from `selection` so both context-menu "Edit" and the details panel's own
@@ -41,6 +44,9 @@ export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnect
 
   useEffect(() => {
     refreshHosts()
+    listSnippets()
+      .then(setSnippets)
+      .catch(() => setSnippets([]))
   }, [])
 
   // Auto-dismiss the transient "Copied…" pill.
@@ -95,7 +101,7 @@ export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnect
 
   function handleSsh(host: SavedHost) {
     const request = resolveConnectRequest(host)
-    if (request) void onConnect(request)
+    if (request) void onConnect(request, resolveStartupCommands(host, snippets))
   }
 
   function handleSftp(host: SavedHost) {
@@ -183,6 +189,7 @@ export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnect
             backToList()
             refreshHosts()
           }}
+          onHostUpdated={refreshHosts}
           onClose={backToList}
           isConnecting={isConnecting}
         />

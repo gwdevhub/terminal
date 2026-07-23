@@ -39,6 +39,12 @@ public sealed class HostRecord
     // per host, including env-var injection) even though that UI doesn't exist yet; avoids
     // a breaking schema change later.
     public List<CredentialRecord> Credentials { get; set; } = [];
+
+    // References SnippetRecord ids (the Snippets vault subfolder) - resolved to actual
+    // command text client-side at connect time, not stored here, so editing a snippet's
+    // command later is reflected the next time this host connects instead of being frozen
+    // at whatever it said when attached.
+    public List<string> StartupSnippetIds { get; set; } = [];
 }
 
 public sealed class CredentialRecord
@@ -120,6 +126,11 @@ public sealed class OpenTabRecord
     public required string AuthMethod { get; set; } // "password" | "privateKey"
     public string? Secret { get; set; }
     public string? Passphrase { get; set; }
+
+    // Resolved command text (see HostRecord.StartupSnippetIds), snapshotted at connect
+    // time same as the credential above - a restart replays whatever ran the first time,
+    // even if the underlying snippet was since edited/deleted.
+    public List<string> StartupCommands { get; set; } = [];
 }
 
 /// <summary>

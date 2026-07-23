@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
-import { createKeychainEntry, listKeychainEntries, type SavedKeychainEntry } from '../lib/api'
+import { createKeychainEntry, listKeychainEntries, listSnippets, type SavedKeychainEntry, type SavedSnippet } from '../lib/api'
 
 export interface ConnectionFormValues {
   name?: string
@@ -10,6 +10,7 @@ export interface ConnectionFormValues {
   password?: string
   privateKey?: string
   passphrase?: string
+  startupSnippetIds?: string[]
 }
 
 interface ConnectionFormProps {
@@ -57,11 +58,27 @@ export function ConnectionForm({
   const [keychainError, setKeychainError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [snippets, setSnippets] = useState<SavedSnippet[]>([])
+  const [startupSnippetIds, setStartupSnippetIds] = useState<string[]>(initialValues?.startupSnippetIds ?? [])
+
   useEffect(() => {
     listKeychainEntries()
       .then(setKeychainEntries)
       .catch(() => setKeychainEntries([]))
   }, [])
+
+  // Only the "new host" form (includeName) saves a host at all, so only it needs this -
+  // Quick Connect has nothing to attach a startup snippet to.
+  useEffect(() => {
+    if (!includeName) return
+    listSnippets()
+      .then(setSnippets)
+      .catch(() => setSnippets([]))
+  }, [includeName])
+
+  function toggleStartupSnippet(id: string) {
+    setStartupSnippetIds((prev) => (prev.includes(id) ? prev.filter((existing) => existing !== id) : [...prev, id]))
+  }
 
   function handleUseKeychainEntry(id: string) {
     setSelectedKeychainId(id)
@@ -101,6 +118,7 @@ export function ConnectionForm({
       password: authMethod === 'password' ? password : undefined,
       privateKey: authMethod === 'privateKey' ? privateKey : undefined,
       passphrase: authMethod === 'privateKey' ? passphrase : undefined,
+      startupSnippetIds: includeName ? startupSnippetIds : undefined,
     })
   }
 
@@ -243,6 +261,27 @@ export function ConnectionForm({
           )}
           {keychainError && <p className="text-sm text-red-400">{keychainError}</p>}
         </>
+      )}
+
+      {includeName && snippets.length > 0 && (
+        <div>
+          <span className={labelClasses}>Startup snippets (optional)</span>
+          <p className="mb-2 text-xs text-slate-500">Sent to the shell, in order, right after this host connects.</p>
+          <ul className="flex flex-col gap-1">
+            {snippets.map((s) => (
+              <li key={s.id}>
+                <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={startupSnippetIds.includes(s.id)}
+                    onChange={() => toggleStartupSnippet(s.id)}
+                  />
+                  {s.snippet.name}
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {errorMessage && (

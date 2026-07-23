@@ -1,4 +1,4 @@
-import type { ConnectRequest, SavedHost, SavedRecentConnection } from './api'
+import type { ConnectRequest, SavedHost, SavedRecentConnection, SavedSnippet } from './api'
 
 // Shared by the saved-host "Connect"/"SSH"/"SFTP" buttons (HostDetailsPanel, HostGrid) -
 // picks the first usable credential off a host record. Full multi-credential selection
@@ -20,6 +20,18 @@ export function resolveConnectRequest(host: SavedHost): ConnectRequest | undefin
     columns: 80,
     rows: 24,
   }
+}
+
+// Resolves a host's attached startup snippets to actual command text, in the order
+// they're listed on the host - looked up fresh from the current snippets list rather than
+// a snapshot, so editing/deleting a snippet is reflected the next time this host connects
+// (see HostRecord.StartupSnippetIds's doc comment). An id whose snippet no longer exists
+// is silently skipped rather than erroring the whole connect.
+export function resolveStartupCommands(host: SavedHost, snippets: SavedSnippet[]): string[] {
+  const ids = host.host.startupSnippetIds ?? []
+  return ids
+    .map((id) => snippets.find((s) => s.id === id)?.snippet.command)
+    .filter((command): command is string => command !== undefined)
 }
 
 // Mirrors resolveConnectRequest, but for a Recent connection - RecentConnectionRecord
