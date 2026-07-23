@@ -8,7 +8,7 @@ import type { ConnectRequest } from '../lib/api'
 
 interface SectionContentProps {
   section: NavSection
-  onConnect: (request: ConnectRequest) => Promise<boolean>
+  onConnect: (request: ConnectRequest, startupCommands?: string[]) => Promise<boolean>
   onConnectSftp: (request: ConnectRequest, label: string) => Promise<boolean>
   errorMessage: string | null
   isConnecting: boolean

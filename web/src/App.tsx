@@ -71,6 +71,7 @@ function requestToOpenTabRecord(tab: SessionTab) {
     authMethod: request.authMethod,
     secret: request.authMethod === 'password' ? request.password : request.privateKey,
     passphrase: request.authMethod === 'privateKey' ? request.passphrase : undefined,
+    startupCommands: tab.startupCommands,
   }
 }
 
@@ -185,6 +186,7 @@ function App() {
             rows: 24,
           },
           status: 'connecting',
+          startupCommands: t.startupCommands,
         }))
 
         if (restored.length > 0) {
@@ -224,7 +226,7 @@ function App() {
   // Returns whether the connect succeeded - HostsSection uses this to only remember an ad
   // hoc (Quick Connect/Recent) destination's credential once it's actually proven to work,
   // not on every attempt (a mistyped password shouldn't get remembered for next time).
-  async function handleConnect(request: ConnectRequest): Promise<boolean> {
+  async function handleConnect(request: ConnectRequest, startupCommands?: string[]): Promise<boolean> {
     setIsConnecting(true)
     setErrorMessage(null)
     try {
@@ -236,6 +238,7 @@ function App() {
         kind: 'ssh',
         request,
         status: 'connected',
+        startupCommands,
       }
       setTabs((prev) => [...prev, tab])
       setActiveTabId(tab.id)
@@ -327,6 +330,7 @@ function App() {
                     sessionId={tab.sessionId}
                     isActive={activeTabId === tab.id}
                     onSessionClosed={() => handleTerminalSessionClosed(tab.id)}
+                    startupCommands={tab.startupCommands}
                   />
                 ) : (
                   <SftpView sessionId={tab.sessionId} homeDirectory={tab.homeDirectory ?? '/'} />
