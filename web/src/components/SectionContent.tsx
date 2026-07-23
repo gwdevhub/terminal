@@ -2,7 +2,6 @@ import { HostsSection } from './HostsSection'
 import { SnippetsSection } from './SnippetsSection'
 import { LogsSection } from './LogsSection'
 import { KeychainSection } from './KeychainSection'
-import { PortForwardingSection } from './PortForwardingSection'
 import { SettingsPage } from './SettingsPage'
 import type { NavSection } from './Sidebar'
 import type { ConnectRequest } from '../lib/api'
@@ -32,7 +31,6 @@ export function SectionContent({ section, onConnect, onConnectSftp, errorMessage
       )}
       {section === 'keychain' && <KeychainSection />}
       {section === 'snippets' && <SnippetsSection />}
-      {section === 'forwarding' && <PortForwardingSection />}
       {section === 'logs' && <LogsSection />}
       {section === 'settings' && <SettingsPage />}
     </>
