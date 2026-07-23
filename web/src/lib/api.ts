@@ -41,6 +41,14 @@ export function terminalSocketUrl(sessionId: string): string {
   return `${protocol}//${window.location.host}/ws/terminal/${sessionId}`
 }
 
+// The AI-agent bottom bar's streaming channel - a sibling of terminalSocketUrl using the
+// exact same same-origin construction (so the auth cookie rides the handshake), pointed at
+// /ws/agent/{sessionId} instead. See AgentBar.tsx and the pinned agent WS contract.
+export function agentSocketUrl(sessionId: string): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}/ws/agent/${sessionId}`
+}
+
 export interface VaultStatus {
   exists: boolean
   unlocked: boolean
@@ -447,6 +455,85 @@ export async function setGithubToken(token: string | null): Promise<GithubTokenS
   await throwOnError(res)
   return res.json()
 }
+
+// --- AI agent ---------------------------------------------------------------------------
+// The Anthropic API key follows the exact same status/setter shape as the GitHub token:
+// the key itself is never returned, only whether one is stored. It's the explicit fallback
+// override - the backend prefers the user's Claude account / env-var credentials (see
+// CredentialStatus below) when no key is stored here.
+
+export interface AnthropicKeyStatus {
+  hasKey: boolean
+}
+
+export async function getAnthropicKeyStatus(): Promise<AnthropicKeyStatus> {
+  const res = await fetch('/api/settings/anthropic-key')
+  await throwOnError(res)
+  return res.json()
+}
+
+export async function setAnthropicKey(key: string | null): Promise<AnthropicKeyStatus> {
+  const res = await fetch('/api/settings/anthropic-key', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  })
+  await throwOnError(res)
+  return res.json()
+}
+
+// Which credential the backend would actually use for an agent turn right now. This is the
+// same probe the server gates a turn on, so this readout can never disagree with the real
+// turn behavior. `ready === (source !== 'none')`. Never carries any secret.
+export interface CredentialStatus {
+  source: 'vault' | 'env-api-key' | 'env-auth-token' | 'ant-profile' | 'none'
+  ready: boolean
+}
+
+export async function getCredentialStatus(): Promise<CredentialStatus> {
+  const res = await fetch('/api/ai/credential-status')
+  await throwOnError(res)
+  return res.json()
+}
+
+// --- Agent WebSocket wire shapes --------------------------------------------------------
+// One JSON object per text frame, camelCase, no subprotocol (see agentSocketUrl). These
+// mirror the pinned agent WS contract verbatim.
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  mode: 'chat' | 'agent'
+  // Inline tool-activity chips shown under an assistant bubble; always [] for user messages.
+  activities: { tool: string; summary: string }[]
+}
+
+// Server -> client frames. Discriminated on `type` so the AgentBar reducer can switch
+// exhaustively.
+export type AgentServerEvent =
+  | { type: 'history'; messages: ChatMessage[] }
+  | { type: 'turn_start'; id: string; mode: 'chat' | 'agent' }
+  | { type: 'text_delta'; id: string; text: string }
+  | {
+      type: 'tool_activity'
+      id: string
+      tool: 'read_terminal' | 'run_command' | 'type_text' | 'wait'
+      summary: string
+    }
+  | {
+      type: 'turn_done'
+      id: string
+      stopReason: 'end_turn' | 'stopped' | 'refusal' | 'error'
+      error?: string
+    }
+  | { type: 'error'; message: string }
+
+// Client -> server frames.
+export type AgentClientMessage =
+  | { type: 'send'; mode: 'chat' | 'agent'; text: string }
+  | { type: 'stop' }
+  | { type: 'clear' }
 
 export interface UpdateCheckResult {
   supported: boolean

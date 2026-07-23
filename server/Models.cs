@@ -51,6 +51,12 @@ public sealed class SetGithubTokenRequest
     public string? Token { get; set; }
 }
 
+public sealed class SetAnthropicKeyRequest
+{
+    // Null/empty clears it.
+    public string? Key { get; set; }
+}
+
 public sealed class UpdateApplyRequest
 {
     public required long AssetId { get; set; }

@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using Renci.SshNet;
+using Slopterm.Server.Ai;
 
 namespace Slopterm.Server;
 
@@ -7,11 +8,18 @@ public sealed class TerminalSession : IDisposable
 {
     private readonly SshClient _client;
     private readonly ShellStream _shell;
+    private readonly object _writeLock = new();
 
     public string Id { get; }
     public string Host { get; }
     public int Port { get; }
     public string Username { get; }
+
+    /// <summary>Recent raw PTY output, for the in-terminal AI agent to read.</summary>
+    public TerminalScrollback Scrollback { get; }
+
+    /// <summary>The AI agent conversation bound to this session; dies with it.</summary>
+    public AgentConversation Agent { get; }
 
     private TerminalSession(string id, SshClient client, ShellStream shell, string host, int port, string username)
     {
@@ -21,6 +29,8 @@ public sealed class TerminalSession : IDisposable
         Host = host;
         Port = port;
         Username = username;
+        Scrollback = new TerminalScrollback();
+        Agent = new AgentConversation(this);
     }
 
     public static TerminalSession Connect(ConnectRequest request)
@@ -71,6 +81,10 @@ public sealed class TerminalSession : IDisposable
                     break;
                 }
 
+                // Capture into the agent scrollback here (before the socket send) so it's
+                // independent of WebSocket backpressure and works even with no browser attached.
+                Scrollback.Append(buffer.AsSpan(0, read));
+
                 await socket.SendAsync(
                     buffer.AsMemory(0, read), WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
             }
@@ -90,14 +104,34 @@ public sealed class TerminalSession : IDisposable
 
             if (result.Count > 0)
             {
-                _shell.Write(buffer, 0, result.Count);
-                _shell.Flush();
+                lock (_writeLock)
+                {
+                    _shell.Write(buffer, 0, result.Count);
+                    _shell.Flush();
+                }
             }
+        }
+    }
+
+    /// <summary>
+    /// Writes agent-generated text straight into the same PTY the user is watching, serialized
+    /// against browser keystrokes via <c>_writeLock</c> so the two input sources never interleave
+    /// a single write.
+    /// </summary>
+    public void WriteToShell(string text)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        lock (_writeLock)
+        {
+            _shell.Write(bytes, 0, bytes.Length);
+            _shell.Flush();
         }
     }
 
     public void Dispose()
     {
+        // Cancel any running agent turn before the shell/client tear down underneath it.
+        Agent.Dispose();
         _shell.Dispose();
         if (_client.IsConnected)
         {

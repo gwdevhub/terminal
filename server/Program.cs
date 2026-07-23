@@ -5,11 +5,13 @@ using System.Net.WebSockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.FileProviders;
 using Slopterm.Server;
+using Slopterm.Server.Ai;
 using Slopterm.Server.Native;
 using Slopterm.Server.Vault;
 
@@ -377,6 +379,32 @@ app.MapPost("/api/settings/github-token", (SetGithubTokenRequest request) =>
     {
         return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
     }
+});
+
+// The Anthropic API key for the in-terminal AI agent - exact mirror of the github-token pair
+// (vault-encrypted secret, never returned to the client, hasKey boolean only).
+app.MapGet("/api/settings/anthropic-key", () => Results.Ok(new { hasKey = !string.IsNullOrEmpty(vault.GetAnthropicKey()) }));
+
+app.MapPost("/api/settings/anthropic-key", (SetAnthropicKeyRequest request) =>
+{
+    try
+    {
+        vault.SetAnthropicKey(request.Key);
+        return Results.Ok(new { hasKey = !string.IsNullOrEmpty(vault.GetAnthropicKey()) });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+});
+
+// Where the agent would resolve its Claude credentials from right now (vault / env / ant profile
+// / none). Same probe the WS agent uses to gate a turn, so this readout can't disagree with the
+// actual behavior. Never returns any secret; no unlock required.
+app.MapGet("/api/ai/credential-status", () =>
+{
+    var (source, ready) = AnthropicCredentials.ProbeSource(vault);
+    return Results.Ok(new { source, ready });
 });
 
 app.MapGet("/api/update/check", async () =>
@@ -888,6 +916,178 @@ app.Map("/ws/terminal/{sessionId}", async (HttpContext context, string sessionId
     if (removed is not null)
     {
         vault.AppendLog(new LogEntryRecord { Event = "disconnected", Host = removed.Host, Port = removed.Port, Username = removed.Username });
+    }
+});
+
+// The in-terminal AI agent's single full-duplex streaming channel. Text frames, one JSON object
+// per frame, camelCase via AgentJson.Web. Same loopback/token/origin gating as every other route
+// (the global middleware above). Unlike the PTY WS, closing this does NOT remove the SSH session -
+// the conversation lives on the still-alive TerminalSession and replays via `history` on reconnect.
+app.Map("/ws/agent/{sessionId}", async (HttpContext context, string sessionId) =>
+{
+    if (!context.WebSockets.IsWebSocketRequest)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+
+    var session = sessions.Get(sessionId);
+    if (session is null)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    // Deliberately NOT `using` - socket/cts are disposed manually in the finally, AFTER the
+    // in-flight turn task has completed, so a still-running turn never emits onto a disposed socket.
+    var socket = await context.WebSockets.AcceptWebSocketAsync();
+    var cts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+    var sendLock = new SemaphoreSlim(1, 1);
+    Task? turnTask = null;
+
+    // Tolerates a closing/closed/disposed socket - never throws upward, so a stray late emit from
+    // a cancelled turn is a silent no-op.
+    async Task Emit(object evt)
+    {
+        if (socket.State != WebSocketState.Open)
+        {
+            return;
+        }
+
+        await sendLock.WaitAsync();
+        try
+        {
+            if (socket.State != WebSocketState.Open)
+            {
+                return;
+            }
+
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(evt, AgentJson.Web);
+            await socket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cts.Token);
+        }
+        catch (WebSocketException) { }
+        catch (ObjectDisposedException) { }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            sendLock.Release();
+        }
+    }
+
+    try
+    {
+        await Emit(new { type = "history", messages = session.Agent.Snapshot() });
+
+        var buffer = new byte[8192];
+        while (socket.State == WebSocketState.Open && !cts.IsCancellationRequested)
+        {
+            using var frame = new MemoryStream();
+            WebSocketReceiveResult received;
+            do
+            {
+                received = await socket.ReceiveAsync(buffer, cts.Token);
+                if (received.MessageType == WebSocketMessageType.Close)
+                {
+                    break;
+                }
+
+                frame.Write(buffer, 0, received.Count);
+            }
+            while (!received.EndOfMessage);
+
+            if (received.MessageType == WebSocketMessageType.Close)
+            {
+                break;
+            }
+
+            if (frame.Length == 0)
+            {
+                continue;
+            }
+
+            AgentClientMessage? msg;
+            try
+            {
+                msg = JsonSerializer.Deserialize<AgentClientMessage>(Encoding.UTF8.GetString(frame.ToArray()), AgentJson.Web);
+            }
+            catch (JsonException)
+            {
+                await Emit(new { type = "error", message = "Malformed frame." });
+                continue;
+            }
+
+            switch (msg?.Type)
+            {
+                case "send":
+                    if (session.Agent.TryBeginTurn(out var token))
+                    {
+                        var current = session.Agent;
+                        var mode = msg.Mode ?? "chat";
+                        var text = msg.Text ?? "";
+                        turnTask = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await current.RunTurnAsync(vault, mode, text, Emit, token);
+                            }
+                            finally
+                            {
+                                current.EndTurn();
+                            }
+                        });
+                    }
+                    else
+                    {
+                        await Emit(new { type = "error", message = "A turn is already running." });
+                    }
+
+                    break;
+                case "stop":
+                    session.Agent.CancelCurrent();
+                    break;
+                case "clear":
+                    session.Agent.Clear();
+                    await Emit(new { type = "history", messages = Array.Empty<ChatMessage>() });
+                    break;
+            }
+        }
+    }
+    catch (OperationCanceledException) { }
+    catch (WebSocketException) { }
+    finally
+    {
+        // Wind the in-flight turn down, WAIT for it, THEN dispose socket/cts - the turn's CTS is
+        // standalone (not linked to this connection), so a dropped socket doesn't auto-cancel it;
+        // CancelCurrent does, and awaiting turnTask guarantees no emit races the disposal below.
+        cts.Cancel();
+        session.Agent.CancelCurrent();
+        if (turnTask is not null)
+        {
+            try
+            {
+                await turnTask;
+            }
+            catch
+            {
+                // observed
+            }
+        }
+
+        if (socket.State == WebSocketState.Open)
+        {
+            try
+            {
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "agent closed", CancellationToken.None);
+            }
+            catch
+            {
+                // best-effort close
+            }
+        }
+
+        socket.Dispose();
+        cts.Dispose();
+        sendLock.Dispose();
     }
 });
 

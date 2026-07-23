@@ -392,6 +392,44 @@ public sealed class VaultService
         SaveRecord("secrets", GithubTokenRecordId, new GithubTokenRecord { Token = token });
     }
 
+    private const string AnthropicKeyRecordId = "anthropic-key";
+
+    /// <summary>Null if locked, unset, or the vault doesn't exist yet - never throws.</summary>
+    public string? GetAnthropicKey()
+    {
+        if (!IsUnlocked)
+        {
+            return null;
+        }
+
+        var path = Path.Combine(_vaultDir, "secrets", $"{AnthropicKeyRecordId}.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var envelope = JsonSerializer.Deserialize<RecordEnvelope>(File.ReadAllText(path));
+        if (envelope is null)
+        {
+            return null;
+        }
+
+        var json = VaultCrypto.Decrypt(_key!, Convert.FromBase64String(envelope.Nonce), Convert.FromBase64String(envelope.Ciphertext));
+        return JsonSerializer.Deserialize<AnthropicKeyRecord>(json)?.Key;
+    }
+
+    public void SetAnthropicKey(string? key)
+    {
+        RequireUnlocked();
+        if (string.IsNullOrEmpty(key))
+        {
+            DeleteRecord("secrets", AnthropicKeyRecordId);
+            return;
+        }
+
+        SaveRecord("secrets", AnthropicKeyRecordId, new AnthropicKeyRecord { Key = key });
+    }
+
     private const string OpenTabsRecordId = "open-tabs";
 
     /// <summary>Empty if locked or nothing saved yet - never throws (this drives app startup).</summary>

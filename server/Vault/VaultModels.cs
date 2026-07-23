@@ -183,6 +183,17 @@ public sealed class GithubTokenRecord
 }
 
 /// <summary>
+/// An Anthropic API key, used by the in-terminal AI agent as the explicit override/fallback when
+/// the SDK's zero-config credential resolution (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN env vars,
+/// or an "ant auth login" profile) isn't what the user wants. Stored encrypted like any other
+/// secret, exactly like <see cref="GithubTokenRecord"/>.
+/// </summary>
+public sealed class AnthropicKeyRecord
+{
+    public required string Key { get; set; }
+}
+
+/// <summary>
 /// settings.json - plaintext, never encrypted, lives alongside vault.json. Must be
 /// readable/writable regardless of whether a vault exists yet or is unlocked, since it's
 /// what decides whether to prompt for a master password at all (see AGENTS.md's Settings
