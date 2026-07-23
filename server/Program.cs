@@ -13,6 +13,10 @@ using Slopterm.Server;
 using Slopterm.Server.Native;
 using Slopterm.Server.Vault;
 
+// Installed before anything else below gets a chance to throw - see CrashLogger's doc
+// comment for why this matters specifically for the published (no-console) Windows build.
+CrashLogger.Install();
+
 // Static asset paths that don't need the auth cookie/token - none of them are sensitive
 // (no secrets, just "an app called slopterm exists"), and installing as a PWA relies on
 // the browser fetching the manifest/service worker/icons in ways that aren't guaranteed

@@ -888,6 +888,32 @@ spirit of Termius, targeting Linux, macOS and Windows.
 - Never log or persist decrypted vault contents (PATs, private keys, passwords) anywhere
   outside the encrypted vault file.
 
+## Crash logging (`CrashLogger.cs`)
+
+- Installed as the very first thing `Program.cs` does, before the port probe, vault init,
+  or window creation get a chance to throw. Without it, an unhandled exception on the
+  published Windows build (no console - see `OutputType=WinExe`, gated to win-x64) just
+  closes the process with zero visible trace: no console to print to, nothing on disk,
+  nothing on screen - "it flashed and closed" with no way to diagnose it, a real report
+  from a user trying the app for the first time.
+- Hooks `AppDomain.CurrentDomain.UnhandledException`, which fires for an exception left
+  uncaught on *any* thread (the main thread's own top-level statements included) right
+  before the runtime tears the process down - one hook covers the whole app rather than
+  needing every startup statement wrapped in its own try/catch.
+- On every unhandled exception: writes the full exception (message + stack trace) to
+  `crash.log` next to the vault (`AppPaths.GetVaultDirectory()`, appended so a run of
+  crashes accumulates instead of overwriting), always echoes it to stderr too (visible
+  whenever there is a console - plain `dotnet run`/`dotnet build` without `-r` stays a
+  normal console app on every OS), and on Windows also shows a native `MessageBox` (same
+  `user32.dll` P/Invoke pattern as `AppWindowManager`'s missing-webview-runtime message)
+  with the short exception message and the log file's path, so a user hitting this isn't
+  just left staring at nothing.
+- Doesn't (and can't) catch a genuine native crash with no corresponding .NET exception at
+  all (see `AppWindowManager`'s doc comment on the double-`PhotinoWindow` case) - this is
+  strictly for .NET-level unhandled exceptions, which cover ordinary startup failures
+  (a bad vault file, a permissions error, an unexpected config value) that would otherwise
+  be indistinguishable from that native-crash case to an affected user.
+
 ## Testing
 
 - **Whenever backend (`server/`) code changes, build the win-x64 self-contained exe and
