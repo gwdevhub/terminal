@@ -71,6 +71,14 @@ public sealed class SftpSession : IDisposable
         return remotePath;
     }
 
+    /// <summary>Uploads raw file bytes (an OS-dragged file, which only exists in the browser
+    /// as bytes - no path on disk) into a remote directory under the given file name.</summary>
+    public async Task UploadBytesAsync(Stream content, string fileName, string remoteDir, CancellationToken ct)
+    {
+        var remotePath = JoinPosixPath(remoteDir, Path.GetFileName(fileName));
+        await _client.UploadFileAsync(content, remotePath, ct);
+    }
+
     /// <summary>Downloads a remote file into a local directory, keeping its original file name.</summary>
     public async Task DownloadFileAsync(string remotePath, string localDir, CancellationToken ct)
     {
@@ -78,6 +86,47 @@ public sealed class SftpSession : IDisposable
         var localPath = Path.Combine(localDir, fileName);
         await using var stream = File.Create(localPath);
         await _client.DownloadFileAsync(remotePath, stream, ct);
+    }
+
+    /// <summary>Renames (or moves within the same parent) a remote file or directory to a new leaf name.</summary>
+    public void Rename(string path, string newName)
+    {
+        var parent = ComputePosixParent(path) ?? "/";
+        _client.RenameFile(path, JoinPosixPath(parent, newName));
+    }
+
+    /// <summary>Deletes a remote file or directory (directories are removed recursively).</summary>
+    public void Delete(string path)
+    {
+        if (_client.GetAttributes(path).IsDirectory)
+        {
+            DeleteDirectoryRecursive(path);
+        }
+        else
+        {
+            _client.DeleteFile(path);
+        }
+    }
+
+    /// <summary>Creates a new directory under the given remote parent directory.</summary>
+    public void MakeDirectory(string parentDir, string name) => _client.CreateDirectory(JoinPosixPath(parentDir, name));
+
+    // SSH.NET's DeleteDirectory only removes an empty directory, so drain the children first.
+    private void DeleteDirectoryRecursive(string path)
+    {
+        foreach (var entry in _client.ListDirectory(path).Where(e => e.Name != "." && e.Name != ".."))
+        {
+            if (entry.IsDirectory)
+            {
+                DeleteDirectoryRecursive(entry.FullName);
+            }
+            else
+            {
+                _client.DeleteFile(entry.FullName);
+            }
+        }
+
+        _client.DeleteDirectory(path);
     }
 
     private static string JoinPosixPath(string dir, string name) => dir.EndsWith('/') ? dir + name : dir + "/" + name;

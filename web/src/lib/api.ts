@@ -8,6 +8,9 @@ export interface ConnectRequest {
   passphrase?: string
   columns: number
   rows: number
+  // Set when connecting to a saved host so the backend can auto-start that host's port
+  // forwards (see ForwardingService). Absent for Quick Connect / Recent.
+  hostId?: string
 }
 
 export interface ConnectResponse {
@@ -171,6 +174,76 @@ export async function importHostShare(token: string): Promise<{ id: string }> {
   })
   await throwOnError(res)
   return res.json()
+}
+
+export interface PortForwardRecord {
+  hostId: string
+  type: 'local' | 'remote'
+  bindAddress: string
+  bindPort: number
+  destinationAddress: string
+  destinationPort: number
+  description?: string
+  autoStart: boolean
+}
+
+export interface SavedPortForward {
+  id: string
+  updatedAt: string
+  forward: PortForwardRecord
+}
+
+// Live state of a rule: 'active' (up), 'connecting' (host connecting / port not up yet), or
+// 'error'. Rules not present here are inactive/stopped.
+export interface ForwardStatus {
+  ruleId: string
+  hostId: string
+  state: 'active' | 'connecting' | 'error'
+  error?: string | null
+}
+
+export async function listPortForwards(): Promise<SavedPortForward[]> {
+  const res = await fetch('/api/vault/port-forwards')
+  await throwOnError(res)
+  return res.json()
+}
+
+export async function createPortForward(forward: PortForwardRecord): Promise<{ id: string }> {
+  const res = await fetch('/api/vault/port-forwards', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(forward),
+  })
+  await throwOnError(res)
+  return res.json()
+}
+
+export async function updatePortForward(id: string, forward: PortForwardRecord): Promise<void> {
+  const res = await fetch(`/api/vault/port-forwards/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(forward),
+  })
+  await throwOnError(res)
+}
+
+export async function deletePortForward(id: string): Promise<void> {
+  await fetch(`/api/vault/port-forwards/${id}`, { method: 'DELETE' })
+}
+
+export async function getForwardingStatus(): Promise<ForwardStatus[]> {
+  const res = await fetch('/api/forwarding/status')
+  await throwOnError(res)
+  return res.json()
+}
+
+export async function startForward(id: string): Promise<void> {
+  const res = await fetch(`/api/forwarding/rules/${id}/start`, { method: 'POST' })
+  await throwOnError(res)
+}
+
+export async function stopForward(id: string): Promise<void> {
+  await fetch(`/api/forwarding/rules/${id}/stop`, { method: 'POST' })
 }
 
 export interface SnippetRecord {
@@ -513,11 +586,83 @@ export async function sftpUpload(sessionId: string, localPath: string, remoteDir
   await throwOnError(res)
 }
 
+// Uploads an OS-dragged File (dropped from the file manager onto a pane) - unlike
+// sftpUpload it has only the file's bytes, no server-side path, so it streams the raw bytes
+// to the bytes-upload endpoint with the name and target remote dir as query params.
+export async function sftpUploadBytes(sessionId: string, file: File, remoteDir: string): Promise<void> {
+  const query = `?name=${encodeURIComponent(file.name)}&remoteDir=${encodeURIComponent(remoteDir)}`
+  const res = await fetch(`/api/sftp/${sessionId}/upload-bytes${query}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  })
+  await throwOnError(res)
+}
+
 export async function sftpDownload(sessionId: string, remotePath: string, localDir: string): Promise<void> {
   const res = await fetch(`/api/sftp/${sessionId}/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ remotePath, localDir }),
+  })
+  await throwOnError(res)
+}
+
+// Remote file-management ops (backed by SftpSession over the live SFTP connection).
+// newName/name are always leaf names, never full paths, matching the backend's own
+// parent-relative handling.
+export async function sftpRename(sessionId: string, path: string, newName: string): Promise<void> {
+  const res = await fetch(`/api/sftp/${sessionId}/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, newName }),
+  })
+  await throwOnError(res)
+}
+
+export async function sftpDelete(sessionId: string, path: string): Promise<void> {
+  const res = await fetch(`/api/sftp/${sessionId}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  await throwOnError(res)
+}
+
+export async function sftpMkdir(sessionId: string, parentDir: string, name: string): Promise<void> {
+  const res = await fetch(`/api/sftp/${sessionId}/mkdir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentDir, name }),
+  })
+  await throwOnError(res)
+}
+
+// Local file-management ops - same shapes as the remote ones, but they hit the machine
+// running slopterm directly and need no session (gated like /api/local/list).
+export async function localRename(path: string, newName: string): Promise<void> {
+  const res = await fetch('/api/local/rename', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, newName }),
+  })
+  await throwOnError(res)
+}
+
+export async function localDelete(path: string): Promise<void> {
+  const res = await fetch('/api/local/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+  await throwOnError(res)
+}
+
+export async function localMkdir(parentDir: string, name: string): Promise<void> {
+  const res = await fetch('/api/local/mkdir', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parentDir, name }),
   })
   await throwOnError(res)
 }
