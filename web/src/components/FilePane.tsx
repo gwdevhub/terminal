@@ -37,6 +37,17 @@ interface FilePaneProps {
   // Verb shown for the transfer menu item ("Upload" on the local pane, "Download" on the
   // remote one) - the direction is inherent to which side this pane is.
   transferLabel: string
+  // OS files dragged from the file manager (Explorer/Finder/Nautilus) onto this pane -
+  // distinct from onDropFile's in-app pane-to-pane drag, since these carry real bytes (a
+  // FileList) rather than the app's custom application/x-slopterm-file payload.
+  onDropOsFiles: (files: FileList) => void
+}
+
+// An OS-file drag (from the file manager) surfaces the real File objects in
+// dataTransfer.files and lists "Files" in dataTransfer.types - neither is true for the
+// app's own pane-to-pane drag, which uses a custom MIME type instead.
+function isOsFileDrag(dataTransfer: DataTransfer): boolean {
+  return dataTransfer.types.includes('Files')
 }
 
 function formatSize(bytes: number): string {
@@ -63,7 +74,7 @@ function joinPath(dir: string, name: string): string {
 // one thing here that needs to know about both panes at once. Right-clicking an entry (or
 // the pane background) opens a context menu of file-management actions, and Ctrl/Shift+
 // click builds a multi-selection those actions apply to in bulk.
-export function FilePane({ title, side, initialPath, list, reloadToken, onPathChange, onDropFile, actions, transferLabel }: FilePaneProps) {
+export function FilePane({ title, side, initialPath, list, reloadToken, onPathChange, onDropFile, onDropOsFiles, actions, transferLabel }: FilePaneProps) {
   const [path, setPath] = useState<string | undefined>(initialPath)
   const [listing, setListing] = useState<FsListing | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -239,7 +250,8 @@ export function FilePane({ title, side, initialPath, list, reloadToken, onPathCh
   }
 
   function handleDragOver(event: DragEvent) {
-    if (!event.dataTransfer.types.includes('application/x-slopterm-file')) return
+    // Accept both the app's own pane-to-pane drag and OS files dragged in from outside.
+    if (!event.dataTransfer.types.includes('application/x-slopterm-file') && !isOsFileDrag(event.dataTransfer)) return
     event.preventDefault()
     setDragOver(true)
   }
@@ -247,6 +259,10 @@ export function FilePane({ title, side, initialPath, list, reloadToken, onPathCh
   function handleDrop(event: DragEvent) {
     event.preventDefault()
     setDragOver(false)
+    if (isOsFileDrag(event.dataTransfer)) {
+      if (event.dataTransfer.files.length > 0) onDropOsFiles(event.dataTransfer.files)
+      return
+    }
     const raw = event.dataTransfer.getData('application/x-slopterm-file')
     if (!raw) return
     const file: DraggedFile = JSON.parse(raw)

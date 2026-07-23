@@ -10,6 +10,7 @@ import {
   sftpMkdir,
   sftpRename,
   sftpUpload,
+  sftpUploadBytes,
 } from '../lib/api'
 import { FilePane, type DraggedFile, type FilePaneActions, type FilePaneSide } from './FilePane'
 
@@ -130,6 +131,34 @@ export function SftpView({ sessionId, homeDirectory }: SftpViewProps) {
     transfer: (paths) => transferSelection('remote', paths),
   }
 
+  // Files dragged in from the OS's own file manager (Explorer/Finder/Nautilus). On the
+  // remote pane this uploads them into its current directory (their bytes come straight
+  // from the browser, so there's no local path for the path-based upload above). The local
+  // pane can't be a target this way - a browser File has no source path on this machine to
+  // copy from - so it just reports that rather than silently doing nothing.
+  async function handleOsDrop(destSide: FilePaneSide, files: FileList) {
+    if (destSide === 'local') {
+      setTransferStatus({ message: 'Drag files onto the remote pane to upload them.', error: true })
+      return
+    }
+    if (!remotePath) return
+
+    for (const file of Array.from(files)) {
+      const thisTransferId = ++transferIdRef.current
+      setTransferStatus({ message: `Uploading ${file.name}…` })
+      try {
+        await sftpUploadBytes(sessionId, file, remotePath)
+        setTransferStatus({ message: `Uploaded ${file.name}` })
+        setRemoteReloadToken((t) => t + 1)
+        setTimeout(() => {
+          if (transferIdRef.current === thisTransferId) setTransferStatus(null)
+        }, 3000)
+      } catch (err) {
+        setTransferStatus({ message: err instanceof Error ? err.message : 'Upload failed', error: true })
+      }
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {transferStatus && (
@@ -147,6 +176,7 @@ export function SftpView({ sessionId, homeDirectory }: SftpViewProps) {
           onDropFile={(file) => void handleDrop('local', file)}
           actions={localActions}
           transferLabel="Upload"
+          onDropOsFiles={(files) => void handleOsDrop('local', files)}
         />
         <FilePane
           title="Remote"
@@ -158,6 +188,7 @@ export function SftpView({ sessionId, homeDirectory }: SftpViewProps) {
           onDropFile={(file) => void handleDrop('remote', file)}
           actions={remoteActions}
           transferLabel="Download"
+          onDropOsFiles={(files) => void handleOsDrop('remote', files)}
         />
       </div>
     </div>
