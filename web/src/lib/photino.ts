@@ -20,7 +20,10 @@ function photino(): PhotinoExternal | undefined {
 export const isDesktopApp = typeof photino()?.sendMessage === 'function'
 
 // Window-control verbs the title bar posts; the backend switches on the "wc:" prefix.
-export type WindowCommand = 'min' | 'max' | 'close' | 'ready'
+// 'drag' hands a title-bar press off to the OS's native window-move loop (see
+// AppWindowManager) - the robust path that doesn't depend on WebView2's experimental
+// draggable-region flag, which some runtime versions silently ignore.
+export type WindowCommand = 'min' | 'max' | 'close' | 'ready' | 'drag'
 
 export function sendWindowCommand(command: WindowCommand): void {
   photino()?.sendMessage?.(`wc:${command}`)
