@@ -185,13 +185,18 @@ public sealed class GithubTokenRecord
 }
 
 /// <summary>
-/// One host's AI agent conversation transcript (ai-chats/{id}.json, id = hash of
-/// user@host:port). Vault-encrypted like every other record - transcripts quote terminal
+/// One AI agent conversation transcript (ai-chats/{id}.json). A host can have MANY of
+/// these - the bar lists them per host and any can be reopened; connecting resumes the
+/// most recent. Vault-encrypted like every other record - transcripts quote terminal
 /// output, which can contain anything the session showed. Only the display transcript is
-/// stored; the model-facing history is rebuilt from it on load.
+/// stored; the model-facing history is rebuilt from it on load. HostKey/Title are nullable
+/// because records written before multi-chat existed (id = hash of the host key, no
+/// metadata) are still adopted - see AgentConversation.EnsureLoaded.
 /// </summary>
 public sealed class AiChatRecord
 {
+    public string? HostKey { get; set; } // "user@host:port", lowercase - which host's list this belongs to
+    public string? Title { get; set; }   // first user message, truncated - the list label
     public required List<ChatMessage> Messages { get; set; }
 }
 

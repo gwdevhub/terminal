@@ -568,15 +568,22 @@ spirit of Termius, targeting Linux, macOS and Windows.
   discarded without reaching the UI); and the tool-call echo into model history carries only
   that round's text - echoing the accumulated text made the model restate itself (observed
   as doubled final answers).
-- **Persistent history:** conversations are keyed per host (`sha256(user@host:port)`,
-  truncated, path-safe) and stored vault-encrypted under `ai-chats/` - encrypted because
-  transcripts quote terminal output, which can contain anything a session showed. Only the
-  display transcript persists (capped at 200 messages, saved best-effort after each turn);
-  the model-facing history is rebuilt from its text turns on load, which is all
-  "continue where we left off" needs. Reconnecting to the same host - across app restarts -
-  resumes the chat; "Clear chat" wipes memory AND the record. All three vault methods are
-  best-effort like `AppendLog`: a locked vault means chats don't persist/restore, never an
-  error in the agent path.
+- **Persistent history, many conversations per host:** each conversation is its own
+  vault-encrypted record under `ai-chats/` (random id; `HostKey` = `user@host:port` and a
+  `Title` derived from the first user message live inside the ciphertext) - encrypted
+  because transcripts quote terminal output, which can contain anything a session showed.
+  Connecting resumes the MOST RECENT conversation for that host - across app restarts - and
+  the bar's "Chats" list shows all of them (newest first) to reopen, plus "New chat"
+  (starts fresh, keeps the outgoing one in the list) and per-entry delete; "Clear chat"
+  deletes the CURRENT record outright. Records written before multi-chat existed (id =
+  `sha256(hostKey)` truncated, no metadata) are still recognized and adopted. Only the
+  display transcript persists (capped at 200 messages, saved best-effort after each turn,
+  never for an empty conversation); the model-facing history is rebuilt from its text turns
+  on load, which is all "continue where we left off" needs. Opening/creating/deleting a
+  chat supersedes anything in flight exactly like clear (generation bump - the cancelled
+  turn emits no turn_done, and the history frame doubles as the client's "running is over"
+  signal). All vault methods are best-effort like `AppendLog`: a locked vault means chats
+  don't persist/restore/list, never an error in the agent path.
 - **UI constraints it must keep respecting:** the collapsed strip is fixed-height,
   transition-free, and present at first paint so wrapping `TerminalView` in a flex column
   never adds an extra `fit()` during `terminal-resize.spec.ts`'s measured window; the

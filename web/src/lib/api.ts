@@ -542,10 +542,21 @@ export interface ChatMessage {
   activities: { tool: string; summary: string }[]
 }
 
+// One entry in the per-host saved-conversations list. `active` marks the conversation the
+// bar is currently showing/continuing.
+export interface ChatSummary {
+  id: string
+  title: string
+  updatedAt: string
+  messageCount: number
+  active: boolean
+}
+
 // Server -> client frames. Discriminated on `type` so the AgentBar reducer can switch
 // exhaustively.
 export type AgentServerEvent =
   | { type: 'history'; messages: ChatMessage[] }
+  | { type: 'chats'; chats: ChatSummary[] }
   | { type: 'turn_start'; id: string; mode: string }
   | { type: 'text_delta'; id: string; text: string }
   | { type: 'tool_activity'; id: string; tool: string; summary: string }
@@ -557,11 +568,16 @@ export type AgentServerEvent =
     }
   | { type: 'error'; message: string }
 
-// Client -> server frames.
+// Client -> server frames. open_chat/new_chat/delete_chat manage the per-host saved
+// conversations (new_chat keeps the outgoing one in the list; clear deletes it).
 export type AgentClientMessage =
   | { type: 'send'; mode: AgentMode; text: string }
   | { type: 'stop' }
   | { type: 'clear' }
+  | { type: 'list_chats' }
+  | { type: 'open_chat'; id: string }
+  | { type: 'new_chat' }
+  | { type: 'delete_chat'; id: string }
 
 export interface UpdateCheckResult {
   supported: boolean

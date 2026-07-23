@@ -1351,6 +1351,43 @@ app.Map("/ws/agent/{sessionId}", async (HttpContext context, string sessionId) =
                     session.Agent.Clear(vault); // also deletes the persisted record
                     await Emit(new { type = "history", messages = Array.Empty<ChatMessage>() });
                     break;
+                case "list_chats":
+                    await Emit(new { type = "chats", chats = session.Agent.ListChats(vault) });
+                    break;
+                case "open_chat":
+                    // Switching conversations supersedes everything in flight, like clear.
+                    queue.Clear();
+                    watchCts?.Cancel();
+                    if (session.Agent.OpenChat(vault, msg.Id ?? ""))
+                    {
+                        await Emit(new { type = "history", messages = session.Agent.Snapshot() });
+                    }
+
+                    await Emit(new { type = "chats", chats = session.Agent.ListChats(vault) });
+                    break;
+                case "new_chat":
+                    // Unlike clear, the outgoing conversation stays in the saved list.
+                    queue.Clear();
+                    watchCts?.Cancel();
+                    session.Agent.NewChat();
+                    await Emit(new { type = "history", messages = Array.Empty<ChatMessage>() });
+                    await Emit(new { type = "chats", chats = session.Agent.ListChats(vault) });
+                    break;
+                case "delete_chat":
+                    if (!string.IsNullOrEmpty(msg.Id))
+                    {
+                        if (session.Agent.DeleteChat(vault, msg.Id))
+                        {
+                            // Deleted the active conversation - same reset as clear.
+                            queue.Clear();
+                            watchCts?.Cancel();
+                            await Emit(new { type = "history", messages = Array.Empty<ChatMessage>() });
+                        }
+
+                        await Emit(new { type = "chats", chats = session.Agent.ListChats(vault) });
+                    }
+
+                    break;
             }
         }
     }

@@ -396,11 +396,29 @@ public sealed class VaultService
     private const string AiChatsFolder = "ai-chats";
 
     /// <summary>
-    /// One host's persisted AI conversation, or null if locked/missing - never throws. All
-    /// three AI-chat methods are best-effort by design (like AppendLog): a locked vault just
-    /// means chats don't persist/restore, never an error in the agent path.
+    /// All persisted AI conversations (every host's - the caller filters by HostKey). All
+    /// four AI-chat methods are best-effort by design (like AppendLog): a locked vault just
+    /// means chats don't persist/restore/list, never an error in the agent path.
     /// </summary>
-    public List<ChatMessage>? GetAiChat(string id)
+    public IReadOnlyList<(string Id, DateTimeOffset UpdatedAt, AiChatRecord Record)> ListAiChats()
+    {
+        if (!IsUnlocked)
+        {
+            return [];
+        }
+
+        try
+        {
+            return ListRecords<AiChatRecord>(AiChatsFolder);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>One persisted conversation, or null if locked/missing/corrupt - never throws.</summary>
+    public AiChatRecord? GetAiChat(string id)
     {
         if (!IsUnlocked)
         {
@@ -422,7 +440,7 @@ public sealed class VaultService
             }
 
             var json = VaultCrypto.Decrypt(_key!, Convert.FromBase64String(envelope.Nonce), Convert.FromBase64String(envelope.Ciphertext));
-            return JsonSerializer.Deserialize<AiChatRecord>(json)?.Messages;
+            return JsonSerializer.Deserialize<AiChatRecord>(json);
         }
         catch
         {
@@ -430,7 +448,7 @@ public sealed class VaultService
         }
     }
 
-    public void SaveAiChat(string id, List<ChatMessage> messages)
+    public void SaveAiChat(string id, AiChatRecord record)
     {
         if (!IsUnlocked)
         {
@@ -439,7 +457,7 @@ public sealed class VaultService
 
         try
         {
-            SaveRecord(AiChatsFolder, id, new AiChatRecord { Messages = messages });
+            SaveRecord(AiChatsFolder, id, record);
         }
         catch
         {

@@ -8,6 +8,7 @@ import {
   type AgentServerEvent,
   type AiStatus,
   type ChatMessage,
+  type ChatSummary,
 } from '../lib/api'
 import { AiAgentIcon } from './icons'
 
@@ -31,6 +32,8 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
   const [disconnected, setDisconnected] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [reconnectNonce, setReconnectNonce] = useState(0)
+  const [chats, setChats] = useState<ChatSummary[] | null>(null)
+  const [chatsOpen, setChatsOpen] = useState(false)
 
   // Held in a ref so send/stop/clear reach the live socket without re-subscribing the WS
   // effect on every render.
@@ -67,6 +70,12 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
     switch (evt.type) {
       case 'history':
         setMessages(evt.messages)
+        // A history frame is also how the server concludes clear/open/new - any turn that
+        // was running when it arrived has been cancelled server-side (no turn_done comes).
+        setRunning(false)
+        break
+      case 'chats':
+        setChats(evt.chats)
         break
       case 'turn_start':
         setMessages((prev) => [...prev, { id: evt.id, role: 'assistant', text: '', mode: evt.mode, activities: [] }])
@@ -176,10 +185,35 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
     setMessages([])
     setRunning(false)
     setNotice(null)
+    sendFrame({ type: 'clear' })
+  }
+
+  function sendFrame(frame: AgentClientMessage) {
     const socket = socketRef.current
     if (socket?.readyState !== WebSocket.OPEN) return
-    const frame: AgentClientMessage = { type: 'clear' }
     socket.send(JSON.stringify(frame))
+  }
+
+  function toggleChats() {
+    setChatsOpen((open) => {
+      if (!open) sendFrame({ type: 'list_chats' })
+      return !open
+    })
+  }
+
+  function openChat(id: string) {
+    setNotice(null)
+    sendFrame({ type: 'open_chat', id })
+    setChatsOpen(false)
+  }
+
+  function newChat() {
+    // Unlike Clear chat, the outgoing conversation stays in the saved list.
+    setMessages([])
+    setRunning(false)
+    setNotice(null)
+    sendFrame({ type: 'new_chat' })
+    setChatsOpen(false)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -330,6 +364,22 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
             <div className="ml-auto flex items-center gap-1">
               <button
                 type="button"
+                onClick={toggleChats}
+                className={`rounded px-2 py-1 text-xs ${
+                  chatsOpen ? 'bg-slate-800 text-slate-200' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                }`}
+              >
+                Chats
+              </button>
+              <button
+                type="button"
+                onClick={newChat}
+                className="rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+              >
+                New chat
+              </button>
+              <button
+                type="button"
                 onClick={clear}
                 className="rounded px-2 py-1 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-200"
               >
@@ -379,13 +429,58 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
             </div>
           )}
 
+          {/* Saved conversations for this host - shown in place of the transcript. */}
+          {chatsOpen && (
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 py-2">
+              {chats == null ? (
+                <p className="m-auto text-xs text-slate-500">Loading chats…</p>
+              ) : chats.length === 0 ? (
+                <p className="m-auto max-w-xs text-center text-xs text-slate-500">
+                  No saved chats for this host yet - they appear here after the first exchange.
+                </p>
+              ) : (
+                chats.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`flex items-center gap-2 rounded border px-2 py-1.5 ${
+                      c.active ? 'border-indigo-700 bg-slate-800/70' : 'border-slate-800 hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <button type="button" onClick={() => openChat(c.id)} className="min-w-0 flex-1 text-left">
+                      <span className="block truncate text-sm text-slate-200">{c.title}</span>
+                      <span className="block text-[11px] text-slate-500">
+                        {new Date(c.updatedAt).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                        {' · '}
+                        {c.messageCount} message{c.messageCount === 1 ? '' : 's'}
+                        {c.active ? ' · current' : ''}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete chat: ${c.title}`}
+                      onClick={() => sendFrame({ type: 'delete_chat', id: c.id })}
+                      className="shrink-0 rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-700 hover:text-slate-200"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           {/* Transcript. select-text + data-selectable-text opt this read-only surface back
               into browser text selection (the app-wide default is user-select: none, issue
               #61) and into the native context menu, so answers can be selected and copied. */}
           <div
             ref={transcriptRef}
             data-selectable-text
-            className="flex min-h-0 flex-1 select-text flex-col gap-2 overflow-y-auto px-2 py-2"
+            className={`min-h-0 flex-1 select-text flex-col gap-2 overflow-y-auto px-2 py-2 ${chatsOpen ? 'hidden' : 'flex'}`}
           >
             {messages.length === 0 ? (
               <p className="m-auto max-w-xs text-center text-xs text-slate-500">

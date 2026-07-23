@@ -29,7 +29,9 @@ public sealed class AgentConversation : IDisposable
     private const int MaxPersistedMessages = 200;
 
     private readonly TerminalSession _session;
-    private readonly string _chatRecordId;
+    private readonly string _hostKey;         // "user@host:port", lowercase - groups saved chats per host
+    private readonly string _legacyRecordId;  // pre-multi-chat record id (hash of _hostKey) - adopted if present
+    private string _currentChatId;            // the vault record the active conversation persists to
     private readonly object _stateLock = new();
     private readonly List<AiChatMessage> _history = []; // model turns (always ends with an assistant msg or empty)
     private readonly List<ChatMessage> _transcript = []; // display turns
@@ -45,18 +47,27 @@ public sealed class AgentConversation : IDisposable
     public AgentConversation(TerminalSession session)
     {
         _session = session;
-        // Stable per-host record id: same host+port+user = same conversation, whatever
-        // session/tab it's viewed from. Hashed so the vault filename stays path-safe.
-        var key = $"{session.Username}@{session.Host}:{session.Port}".ToLowerInvariant();
-        _chatRecordId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32].ToLowerInvariant();
+        _hostKey = $"{session.Username}@{session.Host}:{session.Port}".ToLowerInvariant();
+        // Records written before multi-chat existed used this deterministic per-host id
+        // (hashed so the vault filename stays path-safe) - still recognized so old chats
+        // survive the upgrade.
+        _legacyRecordId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_hostKey)))[..32].ToLowerInvariant();
+        _currentChatId = NewChatId();
     }
 
+    private static string NewChatId() => Guid.NewGuid().ToString("N");
+
+    /// <summary>True when this saved record belongs to this host's conversation list.</summary>
+    private bool BelongsToHost(string id, AiChatRecord record)
+        => record.HostKey == _hostKey || (record.HostKey is null && id == _legacyRecordId);
+
     /// <summary>
-    /// Pulls the persisted transcript for this host into memory (once). Model history is
-    /// rebuilt from the transcript's plain text turns - tool-call plumbing isn't persisted,
-    /// the conversational content is what "continue where we left off" needs. Best-effort: a
-    /// locked vault just means nothing loads now; not marking <c>_loaded</c> lets a later
-    /// call (post-unlock reconnect) retry.
+    /// Pulls the MOST RECENT persisted conversation for this host into memory (once) -
+    /// older ones stay listable/reopenable via <see cref="ListChats"/>/<see cref="OpenChat"/>.
+    /// Model history is rebuilt from the transcript's plain text turns - tool-call plumbing
+    /// isn't persisted; the conversational content is what "continue where we left off"
+    /// needs. Best-effort: a locked vault just means nothing loads now; not marking
+    /// <c>_loaded</c> lets a later call (post-unlock reconnect) retry.
     /// </summary>
     public void EnsureLoaded(VaultService vault)
     {
@@ -67,33 +78,147 @@ public sealed class AgentConversation : IDisposable
                 return;
             }
 
-            var saved = vault.GetAiChat(_chatRecordId);
-            if (saved is { Count: > 0 } && _transcript.Count == 0)
+            var latest = vault.ListAiChats()
+                .Where(c => BelongsToHost(c.Id, c.Record))
+                .OrderByDescending(c => c.UpdatedAt)
+                .FirstOrDefault();
+            if (latest.Record is { Messages.Count: > 0 } && _transcript.Count == 0)
             {
-                _transcript.AddRange(saved);
-                foreach (var message in saved)
-                {
-                    if (string.IsNullOrEmpty(message.Text))
-                    {
-                        continue;
-                    }
-
-                    _history.Add(new AiChatMessage
-                    {
-                        Role = message.Role == "user" ? "user" : "assistant",
-                        Content = message.Text,
-                    });
-                }
-
-                // The model history invariant: ends with an assistant message or is empty.
-                while (_history.Count > 0 && _history[^1].Role != "assistant")
-                {
-                    _history.RemoveAt(_history.Count - 1);
-                }
+                _currentChatId = latest.Id;
+                LoadMessagesLocked(latest.Record.Messages);
             }
 
             _loaded = true;
         }
+    }
+
+    /// <summary>Replaces in-memory state from a saved transcript. Caller holds <c>_stateLock</c>.</summary>
+    private void LoadMessagesLocked(List<ChatMessage> saved)
+    {
+        _transcript.Clear();
+        _history.Clear();
+        _transcript.AddRange(saved);
+        foreach (var message in saved)
+        {
+            if (string.IsNullOrEmpty(message.Text))
+            {
+                continue;
+            }
+
+            _history.Add(new AiChatMessage
+            {
+                Role = message.Role == "user" ? "user" : "assistant",
+                Content = message.Text,
+            });
+        }
+
+        // The model history invariant: ends with an assistant message or is empty.
+        while (_history.Count > 0 && _history[^1].Role != "assistant")
+        {
+            _history.RemoveAt(_history.Count - 1);
+        }
+    }
+
+    /// <summary>This host's saved conversations, newest first, for the bar's chats list.</summary>
+    public List<ChatSummary> ListChats(VaultService vault)
+    {
+        EnsureLoaded(vault);
+        string currentId;
+        lock (_stateLock)
+        {
+            currentId = _currentChatId;
+        }
+
+        return vault.ListAiChats()
+            .Where(c => BelongsToHost(c.Id, c.Record))
+            .OrderByDescending(c => c.UpdatedAt)
+            .Select(c => new ChatSummary
+            {
+                Id = c.Id,
+                Title = c.Record.Title
+                    ?? OneLine(c.Record.Messages.FirstOrDefault(m => m.Role == "user" && m.Text.Length > 0)?.Text ?? "Untitled chat", 60),
+                UpdatedAt = c.UpdatedAt,
+                MessageCount = c.Record.Messages.Count,
+                Active = c.Id == currentId,
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Switches the active conversation to a saved one. Cancels any in-flight turn the same
+    /// way Clear does (generation bump - it skips its commit and emits no turn_done). The
+    /// outgoing conversation was already persisted after its last turn, so nothing is lost.
+    /// </summary>
+    public bool OpenChat(VaultService vault, string id)
+    {
+        var record = vault.GetAiChat(id);
+        if (record is null || !BelongsToHost(id, record))
+        {
+            return false;
+        }
+
+        lock (_stateLock)
+        {
+            _generation++;
+            _pendingSuggestion = null;
+            _currentChatId = id;
+            LoadMessagesLocked(record.Messages);
+            _loaded = true;
+            try
+            {
+                _currentCts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Starts a fresh conversation WITHOUT deleting the current one (that's Clear) - the
+    /// outgoing chat stays in the saved list.
+    /// </summary>
+    public void NewChat()
+    {
+        lock (_stateLock)
+        {
+            _generation++;
+            _transcript.Clear();
+            _history.Clear();
+            _pendingSuggestion = null;
+            _currentChatId = NewChatId();
+            _loaded = true;
+            try
+            {
+                _currentCts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes a saved conversation. Returns true when it was the ACTIVE one - the caller
+    /// then treats it like a clear (this also resets in-memory state to a fresh chat).
+    /// </summary>
+    public bool DeleteChat(VaultService vault, string id)
+    {
+        bool wasActive;
+        lock (_stateLock)
+        {
+            wasActive = id == _currentChatId;
+        }
+
+        if (wasActive)
+        {
+            NewChat();
+        }
+
+        vault.DeleteAiChat(id);
+        return wasActive;
     }
 
     /// <summary>
@@ -157,12 +282,15 @@ public sealed class AgentConversation : IDisposable
     /// </summary>
     public void Clear(VaultService vault)
     {
+        string clearedId;
         lock (_stateLock)
         {
+            clearedId = _currentChatId;
             _generation++;
             _transcript.Clear();
             _history.Clear();
             _pendingSuggestion = null;
+            _currentChatId = NewChatId(); // the deleted record's id is never reused
             _loaded = true; // an explicit clear must not resurrect the old persisted chat
             try
             {
@@ -173,7 +301,7 @@ public sealed class AgentConversation : IDisposable
             }
         }
 
-        vault.DeleteAiChat(_chatRecordId);
+        vault.DeleteAiChat(clearedId);
     }
 
     public void Dispose() => CancelCurrent();
@@ -452,14 +580,26 @@ public sealed class AgentConversation : IDisposable
     private void Persist(VaultService vault)
     {
         List<ChatMessage> snapshot;
+        string chatId;
         lock (_stateLock)
         {
+            chatId = _currentChatId;
             snapshot = _transcript.Count <= MaxPersistedMessages
                 ? _transcript.ToList()
                 : _transcript[^MaxPersistedMessages..];
         }
 
-        vault.SaveAiChat(_chatRecordId, snapshot);
+        if (snapshot.Count == 0)
+        {
+            return; // never persist an empty conversation - it would litter the chats list
+        }
+
+        vault.SaveAiChat(chatId, new AiChatRecord
+        {
+            HostKey = _hostKey,
+            Title = OneLine(snapshot.FirstOrDefault(m => m.Role == "user" && m.Text.Length > 0)?.Text ?? "Untitled chat", 60),
+            Messages = snapshot,
+        });
     }
 
     private static IReadOnlyDictionary<string, JsonElement> ParseArguments(string json)
