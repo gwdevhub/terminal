@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { CloseIcon, MaximizeIcon, MenuIcon, MinimizeIcon, RestoreIcon } from './icons'
 import { ContextMenu } from './ContextMenu'
 import { onWindowMessage, sendWindowCommand } from '../lib/photino'
@@ -39,10 +39,26 @@ export function TitleBar({ collapsed, onToggleCollapsed, onSelectSection, update
     if (rect) setMenu({ x: rect.left, y: rect.bottom + 2 })
   }
 
+  // Fallback window drag: the CSS `-webkit-app-region: drag` above only moves the window on
+  // WebView2 runtimes new enough to honor the experimental draggable-regions flag (see
+  // AppWindowManager) - on the ones that ignore it, the bar is a normal DOM region and this
+  // pointerdown fires instead, handing the press to the OS's own caption-drag loop. Where
+  // the flag *does* work, the draggable region swallows the pointer event so this never
+  // runs, so keeping both is safe. Left button only, and not when the press lands on a
+  // control (the buttons opt out of dragging) so their clicks still register.
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return
+    if ((event.target as HTMLElement).closest('button, .app-no-drag')) return
+    sendWindowCommand('drag')
+  }
+
   const controlButton = 'app-no-drag flex h-8 w-11 items-center justify-center text-slate-400'
 
   return (
-    <div className="app-drag flex h-8 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-900 select-none">
+    <div
+      onPointerDown={handlePointerDown}
+      className="app-drag flex h-8 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-900 select-none"
+    >
       <div className="flex items-center">
         <button
           ref={hamburgerRef}

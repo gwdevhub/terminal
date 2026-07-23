@@ -243,6 +243,9 @@ public static class AppWindowManager
                     case "wc:close":
                         HandleClose(w);
                         break;
+                    case "wc:drag":
+                        BeginNativeDrag(w);
+                        break;
                     case "wc:ready":
                         // Reply so the title bar's maximize/restore glyph starts correct -
                         // the frontend can't read the native maximize state directly.
@@ -409,6 +412,47 @@ public static class AppWindowManager
             // not brought to the front automatically.
         }
     }
+
+    /// <summary>
+    /// Starts moving the window by handing the current mouse-down off to the OS's own caption
+    /// drag loop - the reliable way to move a borderless window, independent of WebView2's
+    /// experimental <c>msWebView2EnableDraggableRegions</c> flag (which some runtime versions
+    /// silently ignore, so CSS <c>-webkit-app-region: drag</c> alone doesn't move the window on
+    /// those - reported on real Windows 11). The title bar posts <c>wc:drag</c> on pointerdown;
+    /// releasing the webview's mouse capture and then telling the top-level window a
+    /// non-client (caption) press happened makes Windows run its normal move loop - snapping,
+    /// multi-monitor and all - until the button is released. Runs on the window's UI thread
+    /// (the web-message handler's thread), which is where these calls must happen.
+    /// </summary>
+    private static void BeginNativeDrag(PhotinoWindow window)
+    {
+        if (!OperatingSystem.IsWindows() || window.WindowHandle == nint.Zero)
+        {
+            return;
+        }
+
+        try
+        {
+            ReleaseCapture();
+            SendMessage(window.WindowHandle, WmNcLButtonDown, HtCaption, nint.Zero);
+        }
+        catch
+        {
+            // Best-effort - a failed drag handoff just means the window doesn't move this
+            // time, never a reason to take the window (or the app) down.
+        }
+    }
+
+    private const uint WmNcLButtonDown = 0x00A1;
+    private static readonly nint HtCaption = 2;
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern nint SendMessage(nint hWnd, uint msg, nint wParam, nint lParam);
 
     [SupportedOSPlatform("windows")]
     [DllImport("user32.dll")]
