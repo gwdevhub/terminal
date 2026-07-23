@@ -5,8 +5,17 @@ namespace Slopterm.Server.Native;
 
 /// <summary>
 /// Makes the Photino/WebView-hosted window belong to slopterm in the Windows shell.
-/// Photino assigns its own window-level AppUserModelID, which takes precedence over the
-/// valid WM_SETICON/class icons and makes the taskbar render a generic hosted-app tile.
+/// ConfigureProcess sets an explicit process AppUserModelID so the tray icon and window
+/// share one identity; because that AppID isn't a shell-registered app, the taskbar can't
+/// find an icon for it and falls back to a generic tile unless the window itself carries a
+/// System.AppUserModel.RelaunchIconResource pointing at the real icon (set below).
+///
+/// The catch is timing: WebView2 clears the window's shell property store while it runs the
+/// async initialization Photino kicks off from Load(), so setting these properties once
+/// straight after Load() is silently wiped. ApplyWindowIdentityWithRetry re-applies on a
+/// background thread until the value survives several checks (i.e. WebView2 has finished
+/// initializing) - verified by reading the taskbar button repaint from generic to the real
+/// icon only once the property sticks.
 /// </summary>
 internal static class WindowsTaskbarIdentity
 {
@@ -30,7 +39,96 @@ internal static class WindowsTaskbarIdentity
         }
     }
 
-    public static void ConfigureWindow(nint windowHandle)
+    /// <summary>
+    /// Applies the taskbar window's shell identity/icon and keeps re-applying until it
+    /// holds. MUST run off the window's message-loop thread - it sleeps between attempts.
+    ///
+    /// Two things make this fiddly. First, Photino's own PhotinoWindow.WindowHandle is NOT
+    /// the top-level frame that owns the taskbar button - setting shell properties on it
+    /// leaves the visible window (and its taskbar tile) untouched - so we locate the real
+    /// window by enumerating the process's visible top-level windows instead. Second,
+    /// WebView2 clears that window's shell property store mid-init, so a single write is
+    /// wiped; each pass re-checks the live value and the property only counts as stuck once
+    /// it has survived a few consecutive checks. Bounded so a window that never appears or
+    /// settles (or gets torn down) can't spin forever.
+    /// </summary>
+    public static void ApplyWindowIdentityWithRetry()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        var stableChecks = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            var windowHandle = FindMainTaskbarWindow();
+            if (windowHandle != nint.Zero)
+            {
+                if (IsAppIdApplied(windowHandle))
+                {
+                    // Survived since the previous pass without WebView2 clearing it.
+                    if (++stableChecks >= 3)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    ConfigureWindow(windowHandle);
+                    stableChecks = 0;
+                }
+            }
+
+            Thread.Sleep(300);
+        }
+    }
+
+    /// <summary>
+    /// The process's visible, titled top-level window - the Photino frame that actually
+    /// owns the taskbar button. Deliberately skips the tray's message-only helper window
+    /// and the invisible IME windows the runtime creates, neither of which is on the
+    /// taskbar. Returns Zero if the window isn't up yet (the caller retries).
+    /// </summary>
+    private static nint FindMainTaskbarWindow()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return nint.Zero;
+        }
+
+        var processId = (uint)Environment.ProcessId;
+        var found = nint.Zero;
+        EnumWindows((hwnd, _) =>
+        {
+            // Redundant with the guard above (EnumWindows only runs on Windows), but the
+            // platform analyzer can't see through the lambda to the caller's check.
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            GetWindowThreadProcessId(hwnd, out var windowProcessId);
+            if (windowProcessId != processId || !IsWindowVisible(hwnd))
+            {
+                return true; // not ours / not visible - keep enumerating
+            }
+
+            var exStyle = GetWindowLong(hwnd, GwlExStyle);
+            if ((exStyle & WsExToolWindow) != 0 || GetWindowTextLength(hwnd) == 0)
+            {
+                return true; // tool/untitled window - not the taskbar frame
+            }
+
+            found = hwnd;
+            return false; // stop enumerating
+        }, nint.Zero);
+
+        return found;
+    }
+
+    private static void ConfigureWindow(nint windowHandle)
     {
         if (!OperatingSystem.IsWindows() || windowHandle == nint.Zero)
         {
@@ -94,6 +192,64 @@ internal static class WindowsTaskbarIdentity
         }
     }
 
+    /// <summary>
+    /// True only if the window currently carries slopterm's AppUserModelID - i.e. our last
+    /// write is still in place and WebView2 hasn't cleared the store since. Used to decide
+    /// when the retry loop can stop.
+    /// </summary>
+    private static bool IsAppIdApplied(nint windowHandle)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        IPropertyStore? propertyStore = null;
+        try
+        {
+            var interfaceId = typeof(IPropertyStore).GUID;
+            if (SHGetPropertyStoreForWindow(windowHandle, ref interfaceId, out propertyStore) < 0)
+            {
+                return false;
+            }
+
+            var key = new PropertyKey(AppUserModelFormatId, 5);
+            if (propertyStore.GetValue(ref key, out var value) < 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                return value.VariantType == 31 // VT_LPWSTR
+                    && value.PointerValue != nint.Zero
+                    && string.Equals(Marshal.PtrToStringUni(value.PointerValue), AppId, StringComparison.Ordinal);
+            }
+            finally
+            {
+                PropVariantClear(ref value);
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (propertyStore is not null)
+            {
+                try
+                {
+                    Marshal.FinalReleaseComObject(propertyStore);
+                }
+                catch
+                {
+                    // Same best-effort release as ConfigureWindow.
+                }
+            }
+        }
+    }
+
     private static readonly Guid AppUserModelFormatId = new("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
 
     [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -103,7 +259,12 @@ internal static class WindowsTaskbarIdentity
         public uint PropertyId = propertyId;
     }
 
-    [StructLayout(LayoutKind.Explicit)]
+    // Size MUST match the native PROPVARIANT exactly - 24 bytes on x64 (an 8-byte header
+    // plus a 16-byte union). Without the explicit Size the two fields below total only 16
+    // bytes, so GetValue writes the union tail past the end of the struct and corrupts
+    // memory (an AccessViolationException that takes down the whole process). PointerValue
+    // overlays the union's first pointer, which is where a VT_LPWSTR value lives.
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
     private struct PropVariant
     {
         [FieldOffset(0)]
@@ -139,6 +300,31 @@ internal static class WindowsTaskbarIdentity
         [PreserveSig]
         int Commit();
     }
+
+    private const int GwlExStyle = -20;
+    private const int WsExToolWindow = 0x00000080;
+
+    private delegate bool EnumWindowsProc(nint hwnd, nint lParam);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, nint lParam);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(nint hwnd);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong(nint hwnd, int index);
+
+    [SupportedOSPlatform("windows")]
+    [DllImport("user32.dll")]
+    private static extern int GetWindowTextLength(nint hwnd);
 
     [SupportedOSPlatform("windows")]
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

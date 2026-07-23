@@ -168,9 +168,6 @@ public static class AppWindowManager
             });
 
             window.Load(new Uri(url));
-            // Photino may apply its own hosted-window identity while Load creates the
-            // webview. Re-apply ours afterwards so the taskbar uses slopterm's icon.
-            ConfigureWindowsTaskbarWindow(window);
 
             lock (Lock)
             {
@@ -179,6 +176,14 @@ public static class AppWindowManager
             }
 
             WindowReady.Set();
+
+            // Give the taskbar window slopterm's icon. This can't be done synchronously
+            // here: WebView2 clears the window's shell identity during the async init it
+            // starts from Load() above, so a single set is wiped and the taskbar shows a
+            // generic tile. The applier re-asserts it on its own thread until it sticks
+            // (see WindowsTaskbarIdentity) - it also finds the real top-level frame itself,
+            // since Photino's WindowHandle isn't the window that owns the taskbar button.
+            StartTaskbarIdentityApplier();
 
             // Blocks this dedicated thread only - Kestrel and everything else keeps
             // running regardless of whether the window is currently visible or
@@ -269,25 +274,23 @@ public static class AppWindowManager
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(nint hWnd);
 
-    private static void ConfigureWindowsTaskbarWindow(PhotinoWindow window)
+    private static void StartTaskbarIdentityApplier()
     {
         if (!OperatingSystem.IsWindows())
         {
             return;
         }
 
-        try
+        // The applier locates the real taskbar window itself (by enumerating this process's
+        // visible top-level windows) and re-applies the shell identity until it holds, so
+        // there's nothing to capture from the PhotinoWindow here. Best-effort background
+        // work: taskbar decoration must never affect whether the window itself opens.
+        var thread = new Thread(WindowsTaskbarIdentity.ApplyWindowIdentityWithRetry)
         {
-            // WindowHandle throws until Photino.Load has initialized the native window,
-            // so this intentionally lives after Load. Taskbar decoration is best-effort
-            // and must never send a healthy window into the browser-fallback path.
-            WindowsTaskbarIdentity.ConfigureWindow(window.WindowHandle);
-        }
-        catch
-        {
-            // The native window remains usable even if Windows rejects its shell
-            // identity; at worst the taskbar temporarily falls back to a generic icon.
-        }
+            IsBackground = true,
+            Name = "slopterm-taskbar-id",
+        };
+        thread.Start();
     }
 
     /// <summary>
