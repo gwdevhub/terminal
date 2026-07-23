@@ -15,9 +15,9 @@
 #
 #   cd web && npm ci && npm run build && cd ../server
 #   dotnet publish -c Release -r win-x64
-#   wine bin/Release/net8.0/win-x64/publish/Slopterm.Server.exe
+#   wine bin/Release/net10.0/win-x64/publish/Slopterm.Server.exe
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0
+FROM mcr.microsoft.com/dotnet/sdk:10.0
 
 # Node.js, matching the version CI uses (see .github/workflows/ci.yml).
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \

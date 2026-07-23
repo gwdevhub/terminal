@@ -164,7 +164,7 @@ spirit of Termius, targeting Linux, macOS and Windows.
     `useEffect` dependency). Verified directly against a real SSH/SFTP server: dragged a
     real file each direction, confirmed the transferred file's content matched byte-for-
     byte on both sides, not just that a same-named entry appeared in the listing.
-- **Backend:** .NET 8 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
+- **Backend:** .NET 10 with C# 14 + SSH.NET (`Renci.SshNet`) — owns all SSH/SFTP/port-forwarding I/O,
   serves the built React bundle plus a WebSocket PTY stream over a local ASP.NET Core
   (Kestrel) HTTP server.
 - **No bundled *browser*.** The backend binds `127.0.0.1` and is always reachable from

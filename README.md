@@ -31,7 +31,7 @@ cd ../server
 dotnet publish -c Release -r win-x64     # or linux-x64 / osx-x64 / osx-arm64
 ```
 
-This produces one self-contained file (`bin/Release/net8.0/<rid>/publish/Slopterm.Server[.exe]`)
+This produces one self-contained file (`bin/Release/net10.0/<rid>/publish/Slopterm.Server[.exe]`)
 with the .NET runtime, all dependencies, and the entire React UI embedded inside it — no
 `wwwroot` folder, no .NET install, nothing else needed alongside it.
 
@@ -73,7 +73,7 @@ That drops into a shell with Xvfb already running and `DISPLAY` set, ready for:
 ```sh
 cd web && npm ci && npm run build && cd ../server
 dotnet publish -c Release -r win-x64
-wine bin/Release/net8.0/win-x64/publish/Slopterm.Server.exe
+wine bin/Release/net10.0/win-x64/publish/Slopterm.Server.exe
 ```
 
 Add `WINEDEBUG=+systray` before `wine ...` to confirm the tray icon actually registered

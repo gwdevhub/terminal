@@ -4,7 +4,7 @@ Playwright tests that drive the real app in a real browser: build the React UI, 
 actual .NET backend, connect it to a disposable `sshd` container, and assert the terminal
 actually shows live shell output.
 
-Requires: Docker (for the throwaway SSH target) and the .NET 8 SDK on `PATH` (the backend
+Requires: Docker (for the throwaway SSH target) and the .NET 10 SDK on `PATH` (the backend
 is started via `dotnet run`, so `server/wwwroot` must already contain a built front-end -
 run `npm run build` in `web/` first).
 
