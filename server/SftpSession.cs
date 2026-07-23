@@ -6,6 +6,10 @@ public sealed record FsEntry(string Name, bool IsDirectory, long Size, DateTime 
 
 public sealed record FsListing(string Path, string? Parent, IReadOnlyList<FsEntry> Entries);
 
+// A single remote file in a sync walk: its path (relative to the sync root, or absolute for
+// TryGetFile), size and last-modified time - the two fields DirectorySyncService reconciles on.
+public sealed record RemoteFile(string RelativePath, long Size, DateTime ModifiedUtc);
+
 public sealed class SftpSession : IDisposable
 {
     private readonly SftpClient _client;
@@ -87,6 +91,101 @@ public sealed class SftpSession : IDisposable
         await using var stream = File.Create(localPath);
         await _client.DownloadFileAsync(remotePath, stream, ct);
     }
+
+    /// <summary>
+    /// Recursively walks a remote directory tree, yielding one entry per file with its path
+    /// relative to <paramref name="remoteRoot"/> (POSIX '/'-joined). Backs DirectorySyncService's
+    /// reconciliation - directories are descended into but not themselves yielded. Returns an
+    /// empty list if the root doesn't exist yet, so a first-ever sync into a fresh tree is fine.
+    /// </summary>
+    public IReadOnlyList<RemoteFile> WalkFiles(string remoteRoot)
+    {
+        var files = new List<RemoteFile>();
+        if (!_client.Exists(remoteRoot))
+        {
+            return files;
+        }
+
+        WalkFilesInto(remoteRoot, "", files);
+        return files;
+    }
+
+    private void WalkFilesInto(string remoteDir, string relativePrefix, List<RemoteFile> files)
+    {
+        foreach (var entry in _client.ListDirectory(remoteDir).Where(e => e.Name != "." && e.Name != ".."))
+        {
+            var relative = relativePrefix.Length == 0 ? entry.Name : relativePrefix + "/" + entry.Name;
+            if (entry.IsDirectory)
+            {
+                WalkFilesInto(entry.FullName, relative, files);
+            }
+            else
+            {
+                files.Add(new RemoteFile(relative, entry.Length, entry.LastWriteTimeUtc));
+            }
+        }
+    }
+
+    /// <summary>Attributes of a single remote file (size/mtime), or null if it doesn't exist.</summary>
+    public RemoteFile? TryGetFile(string remotePath)
+    {
+        if (!_client.Exists(remotePath))
+        {
+            return null;
+        }
+
+        var attrs = _client.GetAttributes(remotePath);
+        return attrs.IsDirectory ? null : new RemoteFile(remotePath, attrs.Size, attrs.LastWriteTimeUtc);
+    }
+
+    /// <summary>
+    /// Uploads a local file to an exact remote path (not just into a directory), creating any
+    /// missing parent directories first and stamping the remote mtime to match the source so a
+    /// later size/mtime reconciliation sees them as equal. Used by DirectorySyncService.
+    /// </summary>
+    public async Task UploadToPathAsync(string localPath, string remotePath, CancellationToken ct)
+    {
+        EnsureRemoteDirectory(ComputePosixParent(remotePath));
+        await using (var stream = File.OpenRead(localPath))
+        {
+            await _client.UploadFileAsync(stream, remotePath, ct);
+        }
+
+        var attrs = _client.GetAttributes(remotePath);
+        attrs.LastWriteTime = File.GetLastWriteTimeUtc(localPath);
+        _client.SetAttributes(remotePath, attrs);
+    }
+
+    /// <summary>
+    /// Downloads an exact remote path to an exact local path, creating any missing parent
+    /// directories and stamping the local mtime to match the remote source. Used by
+    /// DirectorySyncService.
+    /// </summary>
+    public async Task DownloadToPathAsync(string remotePath, string localPath, DateTime remoteModifiedUtc, CancellationToken ct)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+        await using (var stream = File.Create(localPath))
+        {
+            await _client.DownloadFileAsync(remotePath, stream, ct);
+        }
+
+        File.SetLastWriteTimeUtc(localPath, remoteModifiedUtc);
+    }
+
+    // Creates every directory along a remote path that doesn't exist yet (mkdir -p), so an
+    // upload into a not-yet-mirrored subtree can't fail on a missing parent.
+    private void EnsureRemoteDirectory(string? remoteDir)
+    {
+        if (string.IsNullOrEmpty(remoteDir) || _client.Exists(remoteDir))
+        {
+            return;
+        }
+
+        EnsureRemoteDirectory(ComputePosixParent(remoteDir));
+        _client.CreateDirectory(remoteDir);
+    }
+
+    public static string JoinPosix(string dir, string relative) => JoinPosixPath(dir, relative);
 
     /// <summary>Renames (or moves within the same parent) a remote file or directory to a new leaf name.</summary>
     public void Rename(string path, string newName)

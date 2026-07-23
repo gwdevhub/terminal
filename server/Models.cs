@@ -88,6 +88,16 @@ public sealed class SftpMakeDirectoryRequest
     public required string Name { get; set; }
 }
 
+// A one-time directory sync or a start-watch request over an existing SFTP session. Direction
+// is "localToRemote" (local is source of truth) or "remoteToLocal" (remote is). See
+// DirectorySyncService - reconciliation copies missing/newer files only, no deletion propagation.
+public sealed class DirectorySyncRequest
+{
+    public required string LocalDir { get; set; }
+    public required string RemoteDir { get; set; }
+    public string Direction { get; set; } = "localToRemote";
+}
+
 // The local-side equivalents - same shapes, but they need no session (they hit the
 // machine running slopterm directly, gated the same way /api/local/list is).
 public sealed class LocalRenameRequest

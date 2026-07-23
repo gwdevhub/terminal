@@ -62,6 +62,7 @@ var vault = new VaultService();
 // transparently unlocks the vault right now - the frontend never sees an unlock prompt.
 vault.EnsureUnlockedIfPasswordNotRequired();
 var forwarding = new ForwardingService(vault);
+var directorySync = new DirectorySyncService();
 
 // Best-effort cleanup of a previous update's backup - see UpdateService.ApplyAsync. Not
 // fatal if this fails (e.g. the old process briefly still holds it on Windows); it'll just
@@ -399,6 +400,67 @@ app.MapPost("/api/sftp/{sessionId}/mkdir", (string sessionId, SftpMakeDirectoryR
         return Results.BadRequest(new { error = ex.Message });
     }
 });
+
+// One-time directory sync over an existing SFTP session: reconciles the given local and remote
+// directories in one direction (copy missing/newer only - no deletion propagation, see
+// DirectorySyncService). Returns how many files were transferred.
+app.MapPost("/api/sftp/{sessionId}/sync", async (string sessionId, DirectorySyncRequest request, CancellationToken ct) =>
+{
+    var session = sftpSessions.Get(sessionId);
+    if (session is null)
+    {
+        return Results.NotFound();
+    }
+
+    try
+    {
+        var result = await DirectorySyncService.SyncOnceAsync(session, request.LocalDir, request.RemoteDir, ParseSyncDirection(request.Direction), ct);
+        return Results.Ok(new { filesTransferred = result.FilesTransferred });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// Starts an ongoing watch mirroring the local and remote directories until stopped (a local
+// FileSystemWatcher pushes changes immediately; a polling loop catches remote-side changes).
+app.MapPost("/api/sftp/{sessionId}/watch", (string sessionId, DirectorySyncRequest request) =>
+{
+    var session = sftpSessions.Get(sessionId);
+    if (session is null)
+    {
+        return Results.NotFound();
+    }
+
+    try
+    {
+        var watchId = directorySync.StartWatch(session, request.LocalDir, request.RemoteDir, ParseSyncDirection(request.Direction));
+        return Results.Ok(new { watchId });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+app.MapPost("/api/sftp/watch/{watchId}/stop", (string watchId) =>
+{
+    directorySync.StopWatch(watchId);
+    return Results.NoContent();
+});
+
+app.MapGet("/api/sftp/watch/status", () => Results.Ok(directorySync.GetStatus().Select(w => new
+{
+    watchId = w.WatchId,
+    sessionId = w.SessionId,
+    localDir = w.LocalDir,
+    remoteDir = w.RemoteDir,
+    direction = w.Direction == SyncDirection.LocalToRemote ? "localToRemote" : "remoteToLocal",
+    state = w.State,
+    filesTransferred = w.FilesTransferred,
+    error = w.Error,
+})));
 
 app.MapGet("/api/local/list", (string? path) =>
 {
