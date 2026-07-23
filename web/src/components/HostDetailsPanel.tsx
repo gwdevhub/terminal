@@ -1,15 +1,28 @@
-import { useState } from 'react'
-import { createHost, deleteHost, type ConnectRequest, type CredentialRecord, type SavedHost } from '../lib/api'
-import { resolveConnectRequest } from '../lib/hosts'
+import { useEffect, useState } from 'react'
+import {
+  createHost,
+  deleteHost,
+  listSnippets,
+  updateHost,
+  type ConnectRequest,
+  type CredentialRecord,
+  type SavedHost,
+  type SavedSnippet,
+} from '../lib/api'
+import { resolveConnectRequest, resolveStartupCommands } from '../lib/hosts'
 import { ConnectionForm, type ConnectionFormValues } from './ConnectionForm'
 import { CloseIcon } from './icons'
 
 interface HostDetailsPanelProps {
   mode: 'view' | 'new' | 'empty'
   host?: SavedHost
-  onConnect: (request: ConnectRequest) => void
+  onConnect: (request: ConnectRequest, startupCommands?: string[]) => void
   onDeleted: () => void
   onSaved: () => void
+  // Fired after toggling a startup snippet on an already-saved host - refreshes the hosts
+  // list (so this panel sees the updated attachment) without resetting the current
+  // selection the way onSaved/onDeleted do.
+  onHostUpdated: () => void
   onClose: () => void
   errorMessage?: string | null
   isConnecting?: boolean
@@ -28,11 +41,19 @@ export function HostDetailsPanel({
   onConnect,
   onDeleted,
   onSaved,
+  onHostUpdated,
   onClose,
   errorMessage,
   isConnecting,
 }: HostDetailsPanelProps) {
   const [error, setError] = useState<string | null>(null)
+  const [snippets, setSnippets] = useState<SavedSnippet[]>([])
+
+  useEffect(() => {
+    listSnippets()
+      .then(setSnippets)
+      .catch(() => setSnippets([]))
+  }, [])
 
   async function handleSave(values: ConnectionFormValues) {
     setError(null)
@@ -52,6 +73,7 @@ export function HostDetailsPanel({
         address: values.host,
         port: values.port,
         credentials: [credential],
+        startupSnippetIds: values.startupSnippetIds ?? [],
       })
       onSaved()
     } catch (err) {
@@ -69,7 +91,15 @@ export function HostDetailsPanel({
     if (!host) return
     const request = resolveConnectRequest(host)
     if (!request) return
-    onConnect(request)
+    onConnect(request, resolveStartupCommands(host, snippets))
+  }
+
+  async function handleToggleStartupSnippet(id: string) {
+    if (!host) return
+    const current = host.host.startupSnippetIds ?? []
+    const next = current.includes(id) ? current.filter((existing) => existing !== id) : [...current, id]
+    await updateHost(host.id, { ...host.host, startupSnippetIds: next })
+    onHostUpdated()
   }
 
   if (mode === 'new') {
@@ -119,6 +149,27 @@ export function HostDetailsPanel({
           ))}
         </ul>
       </div>
+
+      {snippets.length > 0 && (
+        <div>
+          <p className="text-xs tracking-wide text-slate-500 uppercase">Startup snippets</p>
+          <p className="mb-1 text-xs text-slate-500">Sent to the shell, in order, right after this host connects.</p>
+          <ul className="flex flex-col gap-1">
+            {snippets.map((s) => (
+              <li key={s.id}>
+                <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={(host.host.startupSnippetIds ?? []).includes(s.id)}
+                    onChange={() => handleToggleStartupSnippet(s.id)}
+                  />
+                  {s.snippet.name}
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {errorMessage && (
         <p className="rounded border border-red-800 bg-red-950 px-3 py-2 text-sm text-red-300">{errorMessage}</p>

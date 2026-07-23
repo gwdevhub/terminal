@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
-import { listHosts, upsertRecentConnection, type ConnectRequest, type SavedHost, type SavedRecentConnection } from '../lib/api'
-import { resolveConnectRequest, resolveRecentConnectRequest } from '../lib/hosts'
+import {
+  listHosts,
+  listSnippets,
+  upsertRecentConnection,
+  type ConnectRequest,
+  type SavedHost,
+  type SavedRecentConnection,
+  type SavedSnippet,
+} from '../lib/api'
+import { resolveConnectRequest, resolveRecentConnectRequest, resolveStartupCommands } from '../lib/hosts'
 import { VaultGate } from './VaultGate'
 import { HostGrid } from './HostGrid'
 import { HostDetailsPanel } from './HostDetailsPanel'
@@ -9,7 +17,7 @@ import { QuickConnectModal } from './QuickConnectModal'
 import type { ConnectionFormValues } from './ConnectionForm'
 
 interface HostsSectionProps {
-  onConnect: (request: ConnectRequest) => Promise<boolean>
+  onConnect: (request: ConnectRequest, startupCommands?: string[]) => Promise<boolean>
   onConnectSftp: (request: ConnectRequest, label: string) => Promise<boolean>
   errorMessage: string | null
   isConnecting: boolean
@@ -17,12 +25,16 @@ interface HostsSectionProps {
 
 export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnecting }: HostsSectionProps) {
   const [hosts, setHosts] = useState<SavedHost[]>([])
+  const [snippets, setSnippets] = useState<SavedSnippet[]>([])
   const [selection, setSelection] = useState<'none' | 'new' | string>('none')
   const [quickConnectOpen, setQuickConnectOpen] = useState(false)
   const [recentsRefreshToken, setRecentsRefreshToken] = useState(0)
 
   useEffect(() => {
     refreshHosts()
+    listSnippets()
+      .then(setSnippets)
+      .catch(() => setSnippets([]))
   }, [])
 
   function refreshHosts() {
@@ -60,7 +72,7 @@ export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnect
 
   function handleSsh(host: SavedHost) {
     const request = resolveConnectRequest(host)
-    if (request) void onConnect(request)
+    if (request) void onConnect(request, resolveStartupCommands(host, snippets))
   }
 
   function handleSftp(host: SavedHost) {
@@ -123,6 +135,7 @@ export function HostsSection({ onConnect, onConnectSftp, errorMessage, isConnect
             setSelection('none')
             refreshHosts()
           }}
+          onHostUpdated={refreshHosts}
           onClose={() => setSelection('none')}
           isConnecting={isConnecting}
         />

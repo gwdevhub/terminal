@@ -8,12 +8,16 @@ interface TerminalViewProps {
   sessionId: string
   isActive: boolean
   onSessionClosed: () => void
+  // Sent to the shell, in order, right after the socket opens (see the host's attached
+  // snippets in HostDetailsPanel/ConnectionForm) - only meaningful the first time a given
+  // session id is seen, same as everything else keyed on [sessionId] below.
+  startupCommands?: string[]
 }
 
 // Renders only the terminal itself - the tab strip (App.tsx/TabBar.tsx) owns the
 // session label and close/disconnect action now that multiple sessions can be open at
 // once (issue #9), so a second "Session xxx / Disconnect" header here would be redundant.
-export function TerminalView({ sessionId, isActive, onSessionClosed }: TerminalViewProps) {
+export function TerminalView({ sessionId, isActive, onSessionClosed, startupCommands }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onSessionClosedRef = useRef(onSessionClosed)
@@ -69,7 +73,26 @@ export function TerminalView({ sessionId, isActive, onSessionClosed }: TerminalV
     const socket = new WebSocket(terminalSocketUrl(sessionId))
     socket.binaryType = 'arraybuffer'
 
-    socket.addEventListener('open', () => term.focus())
+    const startupTimeouts: ReturnType<typeof setTimeout>[] = []
+    socket.addEventListener('open', () => {
+      term.focus()
+
+      // A short guard delay before the first one lets the shell's own banner/prompt print
+      // first, so the command text doesn't land in the middle of it; spacing the rest out
+      // the same way keeps each one from racing a slow prompt on the previous line.
+      let delay = 300
+      for (const command of startupCommands ?? []) {
+        const text = command.endsWith('\n') || command.endsWith('\r') ? command : `${command}\r`
+        startupTimeouts.push(
+          setTimeout(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(new TextEncoder().encode(text))
+            }
+          }, delay),
+        )
+        delay += 300
+      }
+    })
     socket.addEventListener('message', (event) => {
       term.write(new Uint8Array(event.data as ArrayBuffer))
     })
@@ -107,6 +130,7 @@ export function TerminalView({ sessionId, isActive, onSessionClosed }: TerminalV
 
     return () => {
       disposed = true
+      startupTimeouts.forEach(clearTimeout)
       clearTimeout(resizeTimeout)
       resizeObserver.disconnect()
       dataDisposable.dispose()
@@ -114,6 +138,11 @@ export function TerminalView({ sessionId, isActive, onSessionClosed }: TerminalV
       term.dispose()
       termRef.current = null
     }
+    // startupCommands is intentionally excluded - it's fixed for the lifetime of a given
+    // sessionId (resolved once at tab-creation time, see App.tsx), so re-running this
+    // whole effect over a prop-identity change would just tear down and recreate the same
+    // live session for no reason.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
   // Re-focus when this tab becomes the active one - it stays mounted-but-hidden while

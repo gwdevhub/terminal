@@ -17,6 +17,9 @@ export interface SessionTab {
   request: ConnectRequest
   status: 'connecting' | 'connected' | 'error'
   errorMessage?: string
+  // Resolved from the saved host's attached snippets at the moment this tab was created
+  // (see lib/hosts.ts's resolveStartupCommands) - only meaningful for 'ssh' tabs.
+  startupCommands?: string[]
 }
 
 interface TabBarProps {

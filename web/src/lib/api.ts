@@ -57,6 +57,7 @@ export interface HostRecord {
   port: number
   parentGroupId?: string | null
   credentials: CredentialRecord[]
+  startupSnippetIds?: string[]
 }
 
 export interface SavedHost {
@@ -118,6 +119,15 @@ export async function createHost(host: HostRecord): Promise<{ id: string }> {
 
 export async function deleteHost(id: string): Promise<void> {
   await fetch(`/api/vault/hosts/${id}`, { method: 'DELETE' })
+}
+
+export async function updateHost(id: string, host: HostRecord): Promise<void> {
+  const res = await fetch(`/api/vault/hosts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(host),
+  })
+  await throwOnError(res)
 }
 
 export interface SnippetRecord {
@@ -247,6 +257,7 @@ export interface OpenTabRecord {
   authMethod: 'password' | 'privateKey'
   secret?: string
   passphrase?: string
+  startupCommands?: string[]
 }
 
 export interface OpenTabsRecord {
