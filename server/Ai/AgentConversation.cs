@@ -265,7 +265,7 @@ public sealed class AgentConversation : IDisposable
 
                 var request = new List<AiChatMessage>
                 {
-                    new() { Role = "system", Content = SystemPrompt(mode) },
+                    new() { Role = "system", Content = SystemPrompt(mode, settings.AiModel) },
                 };
                 request.AddRange(localHistory);
 
@@ -363,7 +363,7 @@ public sealed class AgentConversation : IDisposable
             {
                 var followUp = new List<AiChatMessage>
                 {
-                    new() { Role = "system", Content = SystemPrompt(mode) },
+                    new() { Role = "system", Content = SystemPrompt(mode, settings.AiModel) },
                 };
                 followUp.AddRange(localHistory);
                 followUp.Add(new AiChatMessage
@@ -897,11 +897,13 @@ public sealed class AgentConversation : IDisposable
         return lines.Length <= maxLines ? text : string.Join('\n', lines[^maxLines..]);
     }
 
-    private string SystemPrompt(string mode)
+    private string SystemPrompt(string mode, string model)
     {
+        // The model id is stated explicitly because local models hallucinate their identity
+        // when asked (confidently claiming to be Claude/ChatGPT/etc. - observed live).
         var header =
             $"""
-            You are an AI assistant embedded in a live SSH terminal session connected to {_session.Username}@{_session.Host}:{_session.Port}.
+            You are the AI model "{model}", running locally on this machine via an OpenAI-compatible server (Ollama), embedded as the AI agent of the slopterm SSH client. You are attached to a live SSH terminal session connected to {_session.Username}@{_session.Host}:{_session.Port}. If asked what model you are, say "{model}" - do not claim to be any other AI product.
             """;
 
         // Small local models tend to act and then go silent - every mode hammers on "always
