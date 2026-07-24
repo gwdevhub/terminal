@@ -99,6 +99,7 @@ export function TitleBar({ collapsed, onToggleCollapsed, onSelectSection, update
           onClose={() => setMenu(null)}
           items={[
             { label: collapsed ? 'Expand sidebar' : 'Collapse sidebar', onClick: onToggleCollapsed },
+            { label: 'Appearance', onClick: () => onSelectSection('appearance') },
             { label: 'Settings', onClick: () => onSelectSection('settings') },
           ]}
         />

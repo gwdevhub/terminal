@@ -1126,6 +1126,19 @@ app.MapPost("/api/vault/open-tabs", (OpenTabsRecord request) =>
     return Results.NoContent();
 });
 
+// Appearance (theme colors + fonts) lives in the vault so it syncs across a user's devices
+// like their hosts/snippets. Best-effort exactly like open-tabs above: GET returns null when
+// locked or unset (the client keeps its own localStorage cache for instant, pre-unlock
+// theming), and the POST no-ops while locked. The body is stored opaquely so the theme schema
+// stays a purely client-side concern.
+app.MapGet("/api/vault/appearance", () => Results.Ok(vault.GetAppearance()));
+
+app.MapPost("/api/vault/appearance", (JsonElement request) =>
+{
+    vault.SaveAppearance(request);
+    return Results.NoContent();
+});
+
 app.MapDelete("/api/ssh/session/{sessionId}", (string sessionId) =>
 {
     var removed = sessions.Remove(sessionId);

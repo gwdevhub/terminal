@@ -1,5 +1,84 @@
 @import "tailwindcss";
 
+/* --- Appearance theming (see lib/appearance.ts) ---------------------------------------
+   The whole app is styled with Tailwind v4 utilities, and Tailwind v4 compiles each color
+   utility to `var(--color-<name>)`. So overriding those custom properties re-themes every
+   bg-/text-/border-/ring- utility app-wide at runtime. Rather than expose all ~30 raw stops
+   the app uses, we remap them onto a small set of semantic `--app-*` tokens (written onto
+   <html> by applyAppearance) and derive the in-between stops with color-mix, so changing one
+   token shifts a whole coherent ramp. Defaults below match the stock Tailwind slate/indigo
+   palette so the app looks unchanged until the user customizes it. */
+:root {
+  --app-accent: #4f46e5;
+  --app-bg: #020617;
+  --app-surface: #0f172a;
+  --app-elevated: #1e293b;
+  --app-border: #334155;
+  --app-text-strong: #f1f5f9;
+  --app-text: #cbd5e1;
+  --app-text-muted: #94a3b8;
+  --app-danger: #dc2626;
+  --app-warning: #f59e0b;
+  --app-success: #10b981;
+
+  /* Which way the derived stops lean. In a dark theme, "text" shades sit LIGHTER than their
+     base (toward white) and "fill/tint" shades sit DARKER (toward black); a light theme flips
+     both together (applyAppearance rewrites these), so e.g. an error box goes from dark-tint +
+     light-text to light-tint + dark-text - staying legible either way. Defaults are the dark
+     values, so the formulas below collapse to plain white/black on a fresh install. */
+  --fg-tint: white;
+  --bg-tint: black;
+
+  /* Accent (indigo). Buttons stay saturated indigo + white text in both themes, so the base
+     is fixed; text-ish shades (-400/-300, used for links/spinners) follow --fg-tint. */
+  --color-indigo-600: var(--app-accent);
+  --color-indigo-500: color-mix(in oklab, var(--app-accent), white 12%);
+  --color-indigo-400: color-mix(in oklab, var(--app-accent), var(--fg-tint) 24%);
+  --color-indigo-300: color-mix(in oklab, var(--app-accent), var(--fg-tint) 40%);
+  --color-indigo-700: color-mix(in oklab, var(--app-accent), var(--bg-tint) 15%);
+  --color-indigo-950: color-mix(in oklab, var(--app-accent), var(--bg-tint) 65%);
+
+  /* Neutral ramp (slate). The anchors flip via the tokens themselves, so the interpolated
+     middles are already theme-correct without a tint. */
+  --color-slate-950: var(--app-bg);
+  --color-slate-900: var(--app-surface);
+  --color-slate-800: var(--app-elevated);
+  --color-slate-700: var(--app-border);
+  --color-slate-600: color-mix(in oklab, var(--app-border), var(--app-text-muted) 45%);
+  --color-slate-500: var(--app-text-muted);
+  --color-slate-400: var(--app-text-muted);
+  --color-slate-300: var(--app-text);
+  --color-slate-200: color-mix(in oklab, var(--app-text), var(--app-text-strong) 50%);
+  --color-slate-100: var(--app-text-strong);
+
+  /* Danger (red). -400/-300 are text (→ --fg-tint); -700/-800/-900/-950 are fills/tints/borders
+     for the error box (→ --bg-tint), so text and box flip in opposite directions together. */
+  --color-red-600: var(--app-danger);
+  --color-red-700: color-mix(in oklab, var(--app-danger), var(--bg-tint) 15%);
+  --color-red-400: color-mix(in oklab, var(--app-danger), var(--fg-tint) 22%);
+  --color-red-300: color-mix(in oklab, var(--app-danger), var(--fg-tint) 40%);
+  --color-red-800: color-mix(in oklab, var(--app-danger), var(--bg-tint) 45%);
+  --color-red-900: color-mix(in oklab, var(--app-danger), var(--bg-tint) 60%);
+  --color-red-950: color-mix(in oklab, var(--app-danger), var(--bg-tint) 72%);
+
+  /* Warning (amber) */
+  --color-amber-500: var(--app-warning);
+  --color-amber-400: color-mix(in oklab, var(--app-warning), var(--fg-tint) 14%);
+  --color-amber-300: color-mix(in oklab, var(--app-warning), var(--fg-tint) 38%);
+  --color-amber-200: color-mix(in oklab, var(--app-warning), var(--fg-tint) 45%);
+  --color-amber-800: color-mix(in oklab, var(--app-warning), var(--bg-tint) 45%);
+  --color-amber-950: color-mix(in oklab, var(--app-warning), var(--bg-tint) 70%);
+
+  /* Success (emerald) */
+  --color-emerald-500: var(--app-success);
+  --color-emerald-400: color-mix(in oklab, var(--app-success), var(--fg-tint) 16%);
+
+  /* Fonts. font-sans backs the interface; font-mono backs inline code AND the terminal
+     family (xterm's own metrics are applied separately in TerminalView). */
+  --font-sans: var(--app-ui-family, ui-sans-serif), system-ui, sans-serif;
+  --font-mono: var(--app-mono-family, ui-monospace), Menlo, Consolas, monospace;
+}
+
 html,
 body,
 #root {

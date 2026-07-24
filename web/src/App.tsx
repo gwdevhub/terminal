@@ -14,12 +14,15 @@ import {
   connect,
   disconnect,
   getOpenTabs,
+  getVaultStatus,
   saveOpenTabs,
   saveWindowPosition,
   sftpConnect,
   sftpDisconnect,
   type ConnectRequest,
 } from './lib/api'
+import { pullAppearanceFromVault } from './lib/appearance'
+import { onVaultUnlocked } from './lib/vaultEvents'
 
 // Checked once at startup (not polled) so the Sidebar's Settings icon can show a small
 // "something's new" dot without the user having to open Settings first - the actual
@@ -125,6 +128,27 @@ function App() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId
   }, [activeTabId])
+
+  // Appearance is cached in localStorage (applied at first paint in main.tsx) but the vault
+  // holds the synced, cross-device copy. Pull it as soon as the vault is readable - now if
+  // it's already unlocked (auto-unlocks when no master password is set), and again whenever
+  // the user unlocks it - so a theme set on another device shows up here.
+  useEffect(() => {
+    let cancelled = false
+    const pull = () => {
+      if (!cancelled) void pullAppearanceFromVault()
+    }
+    getVaultStatus()
+      .then((status) => {
+        if (status.unlocked) pull()
+      })
+      .catch(() => {})
+    const unsubscribe = onVaultUnlocked(pull)
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
 
   const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const retryDelaysRef = useRef(new Map<string, number>())
@@ -331,6 +355,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Renaming just updates the tab's label in place - it's persisted (and restored across
+  // restarts) for free by the saveOpenTabs effect above, which already snapshots label.
+  // Empty/whitespace names are rejected in TabBar, so nothing to guard against here.
+  function handleRenameTab(id: string, label: string) {
+    updateTab(id, { label })
+  }
+
   function handleCloseTab(id: string) {
     const tab = tabs.find((t) => t.id === id)
     if (tab?.sessionId) {
@@ -382,7 +413,13 @@ function App() {
           hideChromeControls={isDesktopApp}
         />
         <div className="flex min-h-0 flex-1 flex-col">
-          <TabBar tabs={tabs} activeId={activeTabId} onSelect={setActiveTabId} onClose={handleRequestClose} />
+          <TabBar
+            tabs={tabs}
+            activeId={activeTabId}
+            onSelect={setActiveTabId}
+            onClose={handleRequestClose}
+            onRename={handleRenameTab}
+          />
         <div className="relative min-h-0 flex-1">
           {/* Every open tab's view stays mounted (just hidden) when inactive, so switching
               tabs doesn't tear down its WebSocket/SFTP connection - see issue #9's

@@ -98,6 +98,17 @@ export function SettingsIcon(props: IconProps) {
   )
 }
 
+export function AppearanceIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M12 3a9 9 0 1 0 0 18 2.5 2.5 0 0 0 2.2-3.7c-.4-.7 0-1.6.8-1.6H17a4 4 0 0 0 4-4c0-4.4-4-7.7-9-7.7Z" />
+      <circle cx="7.5" cy="11.5" r="1" />
+      <circle cx="10.5" cy="7.5" r="1" />
+      <circle cx="15" cy="8" r="1" />
+    </svg>
+  )
+}
+
 export function CloseIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

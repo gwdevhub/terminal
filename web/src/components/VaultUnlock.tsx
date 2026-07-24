@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { setupVault, unlockVault } from '../lib/api'
+import { notifyVaultUnlocked } from '../lib/vaultEvents'
 
 interface VaultUnlockProps {
   mode: 'setup' | 'locked'
@@ -22,6 +23,9 @@ export function VaultUnlock({ mode, onUnlocked }: VaultUnlockProps) {
         await unlockVault(password)
       }
       setPassword('')
+      // App-wide signal so appearance (and anything else outside this gate) can pull the
+      // now-decryptable synced copy - see App.tsx.
+      notifyVaultUnlocked()
       onUnlocked()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to unlock vault')

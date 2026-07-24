@@ -507,6 +507,24 @@ export async function saveOpenTabs(record: OpenTabsRecord): Promise<void> {
   })
 }
 
+// Appearance (theme colors + fonts) is stored in the vault so it syncs across devices. The
+// server stores it opaquely, so this is typed as unknown - lib/appearance.ts owns the schema
+// and merges it over defaults. Returns null when the vault is locked or nothing's saved yet.
+export async function getVaultAppearance(): Promise<unknown | null> {
+  const res = await fetch('/api/vault/appearance')
+  await throwOnError(res)
+  return res.json()
+}
+
+// Best-effort like saveOpenTabs - no-ops server-side while the vault is locked.
+export async function saveVaultAppearance(settings: unknown): Promise<void> {
+  await fetch('/api/vault/appearance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  })
+}
+
 export interface AppSettingsInfo {
   requireMasterPassword: boolean
   closeToTray: boolean

@@ -5,6 +5,7 @@ import { KeychainSection } from './KeychainSection'
 import { PortForwardingSection } from './PortForwardingSection'
 import { SyncSection } from './SyncSection'
 import { SettingsPage } from './SettingsPage'
+import { AppearancePage } from './AppearancePage'
 import type { NavSection } from './Sidebar'
 import type { ConnectRequest } from '../lib/api'
 
@@ -36,6 +37,7 @@ export function SectionContent({ section, onConnect, onConnectSftp, errorMessage
       {section === 'forwarding' && <PortForwardingSection />}
       {section === 'sync' && <SyncSection />}
       {section === 'logs' && <LogsSection />}
+      {section === 'appearance' && <AppearancePage />}
       {section === 'settings' && <SettingsPage />}
     </>
   )
