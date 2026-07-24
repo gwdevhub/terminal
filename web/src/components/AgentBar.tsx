@@ -15,6 +15,17 @@ import { AiAgentIcon } from './icons'
 const inputClasses =
   'w-full resize-none rounded border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:border-slate-400 focus:outline-none'
 
+// A transcript message plus the ephemeral, display-only reasoning stream. These extra fields
+// are populated purely from live reasoning_delta frames - the server never persists or replays
+// them (a reasoning model's chain-of-thought is transient), so they're absent after a history
+// reload, which is exactly what we want. `reasoningStart`/`End` (ms epochs) drive the elapsed
+// "Thinking… Ns" / "Thought for Ns" label.
+type UiMessage = ChatMessage & {
+  reasoning?: string
+  reasoningStart?: number
+  reasoningEnd?: number
+}
+
 // The optional AI-agent bottom region of an SSH terminal tab. It is ALWAYS present (as a
 // fixed-height collapsed strip) so wrapping TerminalView in a flex column never induces an
 // extra xterm fit()/redraw during first paint - only expanding it (a user action, well
@@ -23,7 +34,7 @@ const inputClasses =
 export function AgentBar({ sessionId }: { sessionId: string }) {
   const [expanded, setExpanded] = useState(false)
   const [mode, setMode] = useState<AgentMode>('chat')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<UiMessage[]>([])
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
@@ -39,6 +50,10 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
   // effect on every render.
   const socketRef = useRef<WebSocket | null>(null)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  // Whether the transcript is currently scrolled to (near) the bottom. Drives sticky-follow:
+  // streaming deltas only auto-scroll when the user hasn't scrolled up to read back. Starts
+  // true so a fresh, empty transcript follows the first turn.
+  const atBottomRef = useRef(true)
   const panelRef = useRef<HTMLDivElement>(null)
   // null = the default size (45vh capped at 420px); a number once the user drag-resizes.
   const [panelHeight, setPanelHeight] = useState<number | null>(null)
@@ -84,7 +99,31 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
       case 'text_delta':
         setMessages((prev) =>
           prev.some((m) => m.id === evt.id)
-            ? prev.map((m) => (m.id === evt.id ? { ...m, text: m.text + evt.text } : m))
+            ? prev.map((m) =>
+                m.id === evt.id
+                  ? {
+                      ...m,
+                      text: m.text + evt.text,
+                      // First answer text means thinking is over - freeze the elapsed clock.
+                      reasoningEnd: m.reasoning && m.reasoningEnd == null ? Date.now() : m.reasoningEnd,
+                    }
+                  : m,
+              )
+            : prev,
+        )
+        break
+      case 'reasoning_delta':
+        setMessages((prev) =>
+          prev.some((m) => m.id === evt.id)
+            ? prev.map((m) =>
+                m.id === evt.id
+                  ? {
+                      ...m,
+                      reasoning: (m.reasoning ?? '') + evt.text,
+                      reasoningStart: m.reasoningStart ?? Date.now(),
+                    }
+                  : m,
+              )
             : prev,
         )
         break
@@ -101,16 +140,20 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
         break
       case 'turn_done': {
         setRunning(false)
-        if (evt.stopReason === 'error' && evt.error) {
-          const errText = evt.error
-          setMessages((prev) =>
-            prev.some((m) => m.id === evt.id)
-              ? prev.map((m) =>
-                  m.id === evt.id ? { ...m, text: m.text ? `${m.text}\n\n${errText}` : errText } : m,
-                )
-              : prev,
-          )
-        }
+        const errText = evt.stopReason === 'error' && evt.error ? evt.error : null
+        setMessages((prev) =>
+          prev.some((m) => m.id === evt.id)
+            ? prev.map((m) => {
+                if (m.id !== evt.id) return m
+                return {
+                  ...m,
+                  // Stop the clock even if the model only ever thought and never answered.
+                  reasoningEnd: m.reasoning && m.reasoningEnd == null ? Date.now() : m.reasoningEnd,
+                  text: errText ? (m.text ? `${m.text}\n\n${errText}` : errText) : m.text,
+                }
+              })
+            : prev,
+        )
         break
       }
       case 'error':
@@ -149,11 +192,21 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
     }
   }, [sessionId, expanded, reconnectNonce, reduce])
 
-  // Keep the transcript pinned to the newest message as text streams in.
+  // Follow new content only when the user is already at the bottom - if they've scrolled up
+  // (e.g. to read an expanded "thinking" block while it streams), leave their position alone
+  // instead of yanking them back down on every delta.
   useEffect(() => {
     const el = transcriptRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages])
+
+  // Recompute the sticky flag from the user's own scrolling. A small threshold absorbs
+  // sub-pixel rounding and lets "basically at the bottom" still count as pinned. Programmatic
+  // content growth doesn't fire scroll, so this only ever reflects deliberate user scrolling.
+  function handleTranscriptScroll() {
+    const el = transcriptRef.current
+    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+  }
 
   function send() {
     const text = input.trim()
@@ -164,6 +217,9 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
     // Render the user bubble optimistically - the server records it and returns it in later
     // history snapshots, which only arrive on connect/clear, so this never double-renders.
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: 'user', text, mode, activities: [] }
+    // Sending is a deliberate "bring me to the latest" action - re-pin to the bottom so the
+    // reply follows, even if the user had scrolled up while reading earlier output.
+    atBottomRef.current = true
     setMessages((prev) => [...prev, userMessage])
     setNotice(null)
     const frame: AgentClientMessage = { type: 'send', mode, text }
@@ -489,6 +545,7 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
           <div
             ref={transcriptRef}
             data-selectable-text
+            onScroll={handleTranscriptScroll}
             className={`min-h-0 flex-1 select-text flex-col gap-2 overflow-y-auto px-2 py-2 ${chatsOpen ? 'hidden' : 'flex'}`}
           >
             {messages.length === 0 ? (
@@ -542,7 +599,7 @@ export function AgentBar({ sessionId }: { sessionId: string }) {
   )
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({ message }: { message: UiMessage }) {
   const isUser = message.role === 'user'
   return (
     <div className={`flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}`}>
@@ -556,6 +613,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             {message.mode}
           </span>
         )}
+        {!isUser && message.reasoning && <ThinkingBlock message={message} />}
         {message.text && <div>{message.text}</div>}
         {message.activities.length > 0 && (
           <div className="mt-1 flex flex-col gap-1">
@@ -572,5 +630,38 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         )}
       </div>
     </div>
+  )
+}
+
+// The collapsible "thinking" disclosure shown above a reasoning model's answer. Collapsed by
+// default (the chain-of-thought is noise for most reads, signal when debugging a small model).
+// While the model is still thinking (no reasoningEnd yet) a 1s tick keeps the elapsed counter
+// live; once it answers the counter freezes at the final duration.
+function ThinkingBlock({ message }: { message: UiMessage }) {
+  const thinking = message.reasoningEnd == null
+  const [, tick] = useState(0)
+  useEffect(() => {
+    if (!thinking) return
+    const t = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [thinking])
+
+  const start = message.reasoningStart ?? 0
+  const end = message.reasoningEnd ?? Date.now()
+  const secs = start > 0 ? Math.max(0, Math.round((end - start) / 1000)) : 0
+  const label = thinking ? `Thinking… ${secs}s` : `Thought for ${secs}s`
+
+  return (
+    <details className="group mb-1 rounded bg-slate-900/60">
+      <summary className="flex cursor-pointer list-none select-none items-center gap-1 px-2 py-1 text-[11px] text-slate-400 marker:content-none [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className="inline-block transition-transform group-open:rotate-90">
+          ▸
+        </span>
+        <span className={thinking ? 'animate-pulse' : ''}>{label}</span>
+      </summary>
+      <div className="whitespace-pre-wrap break-words px-2 pb-2 text-[11px] leading-relaxed text-slate-500">
+        {message.reasoning}
+      </div>
+    </details>
   )
 }

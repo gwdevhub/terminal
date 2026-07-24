@@ -17,6 +17,16 @@ public static class OpenAiChatClient
     // linked timeout for probes).
     private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
+    // Per-request cap on tokens GENERATED (reasoning + answer). Sent as max_tokens, which
+    // overrides the server's own num_predict - so this number, not the Ollama config, governs
+    // completion length (it's separate from num_ctx, the context window). Reasoning models
+    // spend part - sometimes all - of this budget "thinking" before any visible answer, so
+    // it's deliberately generous: too small and a verbose small model exhausts it mid-thought
+    // and never emits content (finish_reason "length"). Still bounded rather than unlimited so
+    // a runaway small model stays responsive and stoppable; RunTurnAsync surfaces the
+    // budget-exhausted case rather than leaving a silent, empty turn.
+    private const int MaxResponseTokens = 16384;
+
     public sealed record ChatTurnResult(string FinishReason, List<AiToolCall> ToolCalls);
 
     /// <summary>
@@ -31,14 +41,15 @@ public static class OpenAiChatClient
         IReadOnlyList<AiChatMessage> messages,
         object? tools,
         Func<string, Task> onTextDelta,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<string, Task>? onReasoningDelta = null)
     {
         var body = new Dictionary<string, object?>
         {
             ["model"] = model,
             ["messages"] = messages,
             ["stream"] = true,
-            ["max_tokens"] = 4096,
+            ["max_tokens"] = MaxResponseTokens,
         };
         if (tools is not null)
         {
@@ -60,6 +71,11 @@ public static class OpenAiChatClient
         // Tool-call fragments accumulate by index across chunks (id/name arrive first, the
         // arguments JSON may be split over several deltas).
         var toolCalls = new SortedDictionary<int, (string Id, string Name, StringBuilder Args)>();
+        // Some local models don't use the structured reasoning field - they emit their
+        // chain-of-thought inline in content wrapped in <think>...</think> tags. The splitter
+        // pulls those out of the answer stream (routing them to the reasoning callback, or just
+        // dropping them when there's no sink) so raw think text never lands in the answer.
+        var thinkSplitter = new ThinkSplitter(onTextDelta, onReasoningDelta);
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -109,8 +125,21 @@ public static class OpenAiChatClient
                     var text = content.GetString();
                     if (!string.IsNullOrEmpty(text))
                     {
-                        await onTextDelta(text);
+                        await thinkSplitter.PushAsync(text);
                     }
+                }
+
+                // Reasoning models stream their chain-of-thought separately from the answer:
+                // Ollama/OpenAI put it in delta.reasoning, DeepSeek/vLLM in reasoning_content,
+                // with delta.content empty until thinking ends. Surface it through the reasoning
+                // callback so the UI can show a "thinking" indicator instead of a dead-looking
+                // turn - it is never mixed into the answer text or the committed history.
+                if (onReasoningDelta is not null
+                    && (TryGetString(delta, "reasoning", out var reasoning)
+                        || TryGetString(delta, "reasoning_content", out reasoning))
+                    && !string.IsNullOrEmpty(reasoning))
+                {
+                    await onReasoningDelta(reasoning);
                 }
 
                 if (delta.TryGetProperty("tool_calls", out var calls) && calls.ValueKind == JsonValueKind.Array)
@@ -148,6 +177,10 @@ public static class OpenAiChatClient
                 }
             }
         }
+
+        // Flush any text the splitter was holding back (a trailing '<' it couldn't yet rule
+        // out as a tag start, or an unterminated <think> block the model never closed).
+        await thinkSplitter.FinishAsync();
 
         var result = new List<AiToolCall>();
         var fallbackId = 0;
@@ -191,6 +224,155 @@ public static class OpenAiChatClient
         }
 
         return models;
+    }
+
+    /// <summary>
+    /// Streams a content channel while pulling out chain-of-thought wrapped in
+    /// <c>&lt;think&gt;...&lt;/think&gt;</c> (or <c>&lt;thinking&gt;</c>) tags that some local models
+    /// emit inline instead of using the structured reasoning field. Text outside the tags goes to
+    /// the answer sink; text inside goes to the reasoning sink (dropped when that's null, e.g. the
+    /// safety gate, which keeps think-text out of the verdict). Stateful across chunks: a tag may
+    /// straddle a delta boundary, so a trailing fragment that could still grow into a tag is held
+    /// back until the next push (or <see cref="FinishAsync"/>).
+    /// </summary>
+    private sealed class ThinkSplitter(Func<string, Task> onText, Func<string, Task>? onReasoning)
+    {
+        private static readonly string[] OpenTags = ["<think>", "<thinking>"];
+        private static readonly string[] CloseTags = ["</think>", "</thinking>"];
+        private const int LongestTag = 11; // "</thinking>"
+
+        private bool _inThink;
+        private string _buffer = "";
+
+        public async Task PushAsync(string chunk)
+        {
+            _buffer += chunk;
+            while (true)
+            {
+                if (!_inThink)
+                {
+                    var open = IndexOfAnyTag(_buffer, OpenTags);
+                    var close = IndexOfAnyTag(_buffer, CloseTags);
+                    if (open.Index < 0 && close.Index < 0)
+                    {
+                        await EmitHoldingBackPartialTagAsync(onText);
+                        return;
+                    }
+
+                    // An orphan close tag (no matching open) is dropped so it never renders
+                    // literally; otherwise the earlier open tag switches us into think mode.
+                    if (close.Index >= 0 && (open.Index < 0 || close.Index < open.Index))
+                    {
+                        await EmitAsync(onText, _buffer[..close.Index]);
+                        _buffer = _buffer[(close.Index + close.Length)..];
+                        continue;
+                    }
+
+                    await EmitAsync(onText, _buffer[..open.Index]);
+                    _buffer = _buffer[(open.Index + open.Length)..];
+                    _inThink = true;
+                }
+                else
+                {
+                    var close = IndexOfAnyTag(_buffer, CloseTags);
+                    if (close.Index < 0)
+                    {
+                        await EmitHoldingBackPartialTagAsync(onReasoning);
+                        return;
+                    }
+
+                    await EmitAsync(onReasoning, _buffer[..close.Index]);
+                    _buffer = _buffer[(close.Index + close.Length)..];
+                    _inThink = false;
+                }
+            }
+        }
+
+        /// <summary>End of stream: flush whatever's left to the current sink, tags and all.</summary>
+        public Task FinishAsync()
+        {
+            var rest = _buffer;
+            _buffer = "";
+            return rest.Length == 0 ? Task.CompletedTask : EmitAsync(_inThink ? onReasoning : onText, rest);
+        }
+
+        // Emit everything except a trailing run starting at the last '<' that could still grow
+        // into a tag - that fragment stays buffered until the next chunk disambiguates it.
+        private Task EmitHoldingBackPartialTagAsync(Func<string, Task>? sink)
+        {
+            var emitLen = _buffer.Length;
+            var lastLt = _buffer.LastIndexOf('<');
+            if (lastLt >= 0 && _buffer.Length - lastLt < LongestTag && CouldStartTag(_buffer[lastLt..]))
+            {
+                emitLen = lastLt;
+            }
+
+            if (emitLen <= 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            var segment = _buffer[..emitLen];
+            _buffer = _buffer[emitLen..];
+            return EmitAsync(sink, segment);
+        }
+
+        private static Task EmitAsync(Func<string, Task>? sink, string text)
+            => sink is null || text.Length == 0 ? Task.CompletedTask : sink(text);
+
+        // Earliest occurrence of any of the tags (case-insensitive), with the matched length.
+        private static (int Index, int Length) IndexOfAnyTag(string haystack, string[] tags)
+        {
+            var best = -1;
+            var bestLen = 0;
+            foreach (var tag in tags)
+            {
+                var i = haystack.IndexOf(tag, StringComparison.OrdinalIgnoreCase);
+                if (i >= 0 && (best < 0 || i < best))
+                {
+                    best = i;
+                    bestLen = tag.Length;
+                }
+            }
+
+            return (best, bestLen);
+        }
+
+        // True if `tail` (which begins at a '<') is a prefix of some tag, i.e. it might still
+        // become one once more text arrives ("<", "<thi", "</thin"). A '<' that can't begin any
+        // tag (like a literal "< " or "<x") returns false so it emits immediately.
+        private static bool CouldStartTag(string tail)
+        {
+            foreach (var tag in OpenTags)
+            {
+                if (tag.StartsWith(tail, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var tag in CloseTags)
+            {
+                if (tag.StartsWith(tail, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static bool TryGetString(JsonElement obj, string name, out string? value)
+    {
+        if (obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String)
+        {
+            value = el.GetString();
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     private static async Task<string> ReadErrorAsync(HttpResponseMessage response, CancellationToken ct)

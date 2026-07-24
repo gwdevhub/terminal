@@ -370,8 +370,16 @@ public sealed class AgentConversation : IDisposable
         // turn_start -> turn_done(error) pair the frontend expects.
         await emit(new { type = "turn_start", id = assistantId, mode });
 
+        // Reasoning models emit their chain-of-thought before (or instead of) an answer; stream
+        // it to the UI as a distinct thinking channel so a long think reads as progress, not a
+        // hang. It never enters assistant.Text (so it isn't persisted or fed back into history).
+        Func<string, Task> onReasoning = text => emit(new { type = "reasoning_delta", id = assistantId, text });
+
         var stopReason = "end_turn";
         string? error = null;
+        // The final round's finish_reason - "length" means the model hit the token cap (often a
+        // reasoning model that spent it all thinking), used below to explain an empty answer.
+        var lastFinishReason = "stop";
         try
         {
             // Chat mode sends no tools at all (works with models that lack tool support) and
@@ -419,7 +427,9 @@ public sealed class AgentConversation : IDisposable
                         assistant.Text += text;
                         await emit(new { type = "text_delta", id = assistantId, text });
                     },
-                    ct);
+                    ct,
+                    onReasoning);
+                lastFinishReason = result.FinishReason;
 
                 if (bufferThisRound)
                 {
@@ -507,7 +517,22 @@ public sealed class AgentConversation : IDisposable
                         assistant.Text += text;
                         await emit(new { type = "text_delta", id = assistantId, text });
                     },
-                    ct);
+                    ct,
+                    onReasoning);
+            }
+
+            // A reasoning model can spend its whole token budget thinking (finish_reason
+            // "length") and never produce a visible answer - or a model can just return empty
+            // content. Either way, surface a note instead of leaving the user staring at a
+            // silent, blank turn (the exact "runs forever, sends nothing" symptom).
+            if (string.IsNullOrWhiteSpace(assistant.Text) && assistant.Activities.Count == 0)
+            {
+                var note = lastFinishReason == "length"
+                    ? "The model hit its response-token limit while thinking and never produced an answer. "
+                      + "Try a shorter prompt, or switch to a model that doesn't \"think\" as much (Settings -> AI agent)."
+                    : "The model returned an empty response.";
+                assistant.Text = note;
+                await emit(new { type = "text_delta", id = assistantId, text = note });
             }
         }
         catch (OperationCanceledException)
@@ -783,7 +808,16 @@ public sealed class AgentConversation : IDisposable
             }
 
             default:
-                return ($"unknown tool: {name}", $"Error: unknown tool '{name}'.");
+                // A small model can hallucinate a tool - sometimes with a whole sentence as the
+                // "name" (seen when its malformed output gets parsed into a tool call). Truncate
+                // it in the activity chip, and hand back the real, mode-appropriate tool list so
+                // the model can correct itself instead of repeating the bad call.
+                var available = mode == "auto"
+                    ? "read_terminal, run_command, press_keys, wait"
+                    : "read_terminal, suggest_command, wait";
+                return ($"unknown tool: {OneLine(name, 40)}",
+                    $"Error: there is no tool named '{OneLine(name, 80)}'. Available tools: {available}. "
+                    + "Call one of those, or just reply in chat.");
         }
     }
 

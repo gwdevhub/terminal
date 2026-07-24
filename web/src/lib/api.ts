@@ -570,6 +570,9 @@ export type AgentServerEvent =
   | { type: 'chats'; chats: ChatSummary[] }
   | { type: 'turn_start'; id: string; mode: string }
   | { type: 'text_delta'; id: string; text: string }
+  // Chain-of-thought from a reasoning model, streamed on its own channel so the bar can show
+  // a "thinking" indicator; never part of the persisted transcript (see AgentBar's UiMessage).
+  | { type: 'reasoning_delta'; id: string; text: string }
   | { type: 'tool_activity'; id: string; tool: string; summary: string }
   | {
       type: 'turn_done'
