@@ -10,6 +10,7 @@ import {
 import { ConfirmDialog } from './ConfirmDialog'
 import { AiSettingsSection } from './AiSettingsSection'
 import { UpdateSection } from './UpdateSection'
+import { isTabBadgeEnabled, setTabBadgeEnabled } from '../lib/tabBadge'
 
 const inputClasses =
   'w-full rounded border border-slate-700 bg-slate-900 px-3 py-2 text-slate-100 focus:border-slate-400 focus:outline-none'
@@ -24,6 +25,9 @@ export function SettingsPage() {
   const [closeToTray, setCloseToTrayState] = useState<boolean | null>(null)
   const [closeToTrayBusy, setCloseToTrayBusy] = useState(false)
   const [closeToTrayError, setCloseToTrayError] = useState<string | null>(null)
+
+  // Client-side visual pref (localStorage), not a backend setting - see lib/tabBadge.ts.
+  const [tabBadge, setTabBadge] = useState(isTabBadgeEnabled())
 
   const [exportError, setExportError] = useState<string | null>(null)
   const [importBusy, setImportBusy] = useState(false)
@@ -235,6 +239,30 @@ export function SettingsPage() {
           </button>
         </div>
         {closeToTrayError && <p className="text-sm text-red-400">{closeToTrayError}</p>}
+      </div>
+
+      <div className="flex items-center justify-between gap-4 rounded border border-slate-700 bg-slate-900 p-4">
+        <div>
+          <p className="font-medium text-slate-100">Show open-tab count on the app icon</p>
+          <p className="text-sm text-slate-400">
+            Puts a small counter on the browser-tab favicon showing how many sessions are open.
+            It turns the accent color when a background tab has new output you haven't seen yet.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !tabBadge
+            setTabBadge(next)
+            setTabBadgeEnabled(next)
+          }}
+          aria-label="Show open-tab count on the app icon"
+          className={`shrink-0 rounded px-4 py-2 text-sm font-medium ${
+            tabBadge ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+          }`}
+        >
+          {tabBadge ? 'On' : 'Off'}
+        </button>
       </div>
 
       <AiSettingsSection />

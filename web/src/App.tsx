@@ -23,6 +23,7 @@ import {
 } from './lib/api'
 import { pullAppearanceFromVault } from './lib/appearance'
 import { onVaultUnlocked } from './lib/vaultEvents'
+import { applyFaviconBadge, isTabBadgeEnabled, subscribeTabBadge } from './lib/tabBadge'
 
 // Checked once at startup (not polled) so the Sidebar's Settings icon can show a small
 // "something's new" dot without the user having to open Settings first - the actual
@@ -117,6 +118,31 @@ function App() {
   // snapshot with an empty one) before the one-time restore-on-startup fetch has resolved.
   const [tabsRestored, setTabsRestored] = useState(false)
 
+  // Favicon tab badge (opt-in, see lib/tabBadge.ts). `unseenTabIds` holds background tabs
+  // that produced output the user hasn't looked at yet; the badge turns the accent color
+  // while any exist. `badgeEnabled` mirrors the localStorage pref that Settings toggles.
+  const [unseenTabIds, setUnseenTabIds] = useState<Set<string>>(new Set())
+  const [badgeEnabled, setBadgeEnabled] = useState(isTabBadgeEnabled())
+  useEffect(() => subscribeTabBadge(() => setBadgeEnabled(isTabBadgeEnabled())), [])
+
+  function markTabUnseen(id: string) {
+    setUnseenTabIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }
+
+  function clearTabUnseen(id: string) {
+    setUnseenTabIds((prev) => {
+      if (!prev.has(id)) return prev
+      const next = new Set(prev)
+      next.delete(id)
+      return next
+    })
+  }
+
   const tabsRef = useRef<SessionTab[]>([])
   useEffect(() => {
     tabsRef.current = tabs
@@ -150,6 +176,16 @@ function App() {
     }
   }, [])
 
+  // Viewing a tab clears its unseen-activity flag (its output is now seen).
+  useEffect(() => {
+    if (activeTabId) clearTabUnseen(activeTabId)
+  }, [activeTabId])
+
+  // Redraw the favicon badge whenever the count, unseen state, or the pref changes.
+  useEffect(() => {
+    void applyFaviconBadge({ enabled: badgeEnabled, count: tabs.length, hasUnseen: unseenTabIds.size > 0 })
+  }, [badgeEnabled, tabs.length, unseenTabIds])
+
   const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const retryDelaysRef = useRef(new Map<string, number>())
 
@@ -166,6 +202,7 @@ function App() {
 
   function removeTab(id: string) {
     cancelReconnect(id)
+    clearTabUnseen(id)
     setTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== id)
       setActiveTabId((current) => {
@@ -439,6 +476,7 @@ function App() {
                         sessionId={tab.sessionId}
                         isActive={activeTabId === tab.id}
                         onSessionClosed={() => handleTerminalSessionClosed(tab.id)}
+                        onActivity={() => markTabUnseen(tab.id)}
                         request={tab.request}
                         startupCommands={tab.startupCommands}
                       />
