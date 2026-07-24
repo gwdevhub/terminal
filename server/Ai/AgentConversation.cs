@@ -373,7 +373,22 @@ public sealed class AgentConversation : IDisposable
         // Reasoning models emit their chain-of-thought before (or instead of) an answer; stream
         // it to the UI as a distinct thinking channel so a long think reads as progress, not a
         // hang. It never enters assistant.Text (so it isn't persisted or fed back into history).
-        Func<string, Task> onReasoning = text => emit(new { type = "reasoning_delta", id = assistantId, text });
+        // But the chain-of-thought is often exactly where such a model expresses the command it
+        // means to propose, and that text no longer lands in assistant.Text - so remember whether
+        // a code span appeared here. The suggest-mode rescue nudge below keys off a code span to
+        // catch a model that proposed a command but forgot to call suggest_command; before the
+        // reasoning split that backtick lived in assistant.Text, so without this the nudge would
+        // silently stop firing for reasoning models and nothing would get typed at all.
+        var reasoningHadCodeSpan = false;
+        Func<string, Task> onReasoning = text =>
+        {
+            if (!reasoningHadCodeSpan && text.Contains('`'))
+            {
+                reasoningHadCodeSpan = true;
+            }
+
+            return emit(new { type = "reasoning_delta", id = assistantId, text });
+        };
 
         var stopReason = "end_turn";
         string? error = null;
@@ -446,12 +461,16 @@ public sealed class AgentConversation : IDisposable
                 {
                     // Small models sometimes narrate the command in chat instead of calling
                     // suggest_command - but the point of suggest mode is the command landing
-                    // in the terminal. One deterministic retry: if the answer contains a code
-                    // span and nothing was typed yet, tell the model to call the tool (or say
-                    // DONE, which the buffering above swallows).
+                    // in the terminal. One deterministic retry: if the answer OR the model's
+                    // chain-of-thought contains a code span and nothing was typed yet, tell the
+                    // model to call the tool (or say DONE, which the buffering above swallows).
+                    // Checking reasoning too is load-bearing for reasoning models, which routinely
+                    // express the command only inside <think> - that text is split out of
+                    // assistant.Text, so without the reasoningHadCodeSpan arm this nudge never
+                    // fires for them and the suggestion is never typed.
                     if (mode == "suggest" && !suggestNudged
                         && !assistant.Activities.Any(a => a.Tool == "suggest_command")
-                        && assistant.Text.Contains('`'))
+                        && (assistant.Text.Contains('`') || reasoningHadCodeSpan))
                     {
                         suggestNudged = true;
                         bufferNextRound = true;
@@ -681,11 +700,16 @@ public sealed class AgentConversation : IDisposable
                     return ("rejected suggestion (not a single command)", $"Error: {sanitizeError}");
                 }
 
-                var typedAt = _session.Scrollback.TotalWritten;
-                _session.WriteToShell(command);
-                lock (_stateLock)
+                if (!TypeSuggestion(command))
                 {
-                    _pendingSuggestion = (typedAt, command);
+                    // The write to the PTY failed, so nothing is sitting at the prompt and the
+                    // pending guard was deliberately left disarmed (see TypeSuggestion). Report
+                    // it plainly rather than arming pending on a command that never landed -
+                    // that would block every later typing tool this turn with "one already
+                    // pending" while there is no typed line for the user to Enter and clear.
+                    return ("suggest_command failed to type",
+                        "Error: the command could not be typed into the terminal (the shell may have disconnected). "
+                        + "Nothing is pending - tell the user; they can retry once the session is back.");
                 }
 
                 return ($"suggested: {OneLine(command, 80)}",
@@ -719,11 +743,11 @@ public sealed class AgentConversation : IDisposable
                 if (!safe)
                 {
                     var typed = OneLine(command, int.MaxValue);
-                    var flaggedAt = _session.Scrollback.TotalWritten;
-                    _session.WriteToShell(typed);
-                    lock (_stateLock)
+                    if (!TypeSuggestion(typed))
                     {
-                        _pendingSuggestion = (flaggedAt, typed);
+                        return ("run_command failed to type",
+                            "Error: the flagged command could not be typed into the terminal (the shell may have "
+                            + "disconnected). Nothing is pending - tell the user.");
                     }
 
                     return ($"suggested (safety check): {OneLine(typed, 80)}",
@@ -768,11 +792,11 @@ public sealed class AgentConversation : IDisposable
                 var (safe, reason) = await VerifyActionSafeAsync(settings, keys, ct);
                 if (!safe)
                 {
-                    var flaggedAt = _session.Scrollback.TotalWritten;
-                    _session.WriteToShell(keys);
-                    lock (_stateLock)
+                    if (!TypeSuggestion(keys))
                     {
-                        _pendingSuggestion = (flaggedAt, keys);
+                        return ("press_keys failed to type",
+                            "Error: the flagged keystrokes could not be typed into the terminal (the shell may have "
+                            + "disconnected). Nothing is pending - tell the user.");
                     }
 
                     return ($"suggested keystrokes (safety check): {OneLine(keys, 80)}",
@@ -1038,6 +1062,40 @@ public sealed class AgentConversation : IDisposable
         }
 
         return runnable[0];
+    }
+
+    /// <summary>
+    /// Types a proposed command/keystrokes into the PTY and, ONLY if the write actually reached
+    /// the shell, arms the single-pending-suggestion guard for it. The ordering is the whole
+    /// point of the method: that guard blocks every further typing tool for the rest of the turn
+    /// to protect the real, unexecuted line sitting at the prompt, so it must never be armed for
+    /// input that never got typed. Arming it after a failed write would wedge the turn on
+    /// "one already pending" with NO line for the user to Enter and clear - a permanent deadlock.
+    /// Returns false (guard left disarmed) when the write throws, so the caller reports the
+    /// failure instead of pretending something is pending. Callers only reach here with an
+    /// already-sanitized, non-empty string, so a successful write always leaves a real pending
+    /// line - never an empty one that could deadlock the guard silently.
+    /// </summary>
+    private bool TypeSuggestion(string text)
+    {
+        // Capture the offset BEFORE writing: the continuation watch treats the first newline
+        // past this point as the user's Enter, so it has to predate the typed characters.
+        var typedAt = _session.Scrollback.TotalWritten;
+        try
+        {
+            _session.WriteToShell(text);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        lock (_stateLock)
+        {
+            _pendingSuggestion = (typedAt, text);
+        }
+
+        return true;
     }
 
     /// <summary>A typed suggestion is already sitting at the prompt - nothing else may be typed until the user acts.</summary>

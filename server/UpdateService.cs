@@ -205,9 +205,32 @@ public sealed class UpdateService
             return null;
         }
 
-        // Development runs via `dotnet run`/`dotnet exec`, so ProcessPath is the shared
-        // `dotnet` host itself, not our own single-file exe - nothing meaningful to
-        // hash/replace there.
+        // Only a genuine published single-file build is updatable - there's no single exe
+        // that *is* the app to hash/swap otherwise. Two independent guards, because neither
+        // alone is sufficient:
+        //
+        //  - Empty Assembly.Location is the reliable single-file signal. When the app is
+        //    bundled into one self-contained exe, the runtime loads assemblies straight from
+        //    the bundle rather than from disk, so GetEntryAssembly().Location is an empty
+        //    string. Under `dotnet run`, `dotnet build`, or any normal framework-dependent
+        //    run it's the real on-disk DLL path instead. This is the documented way to detect
+        //    a single-file publish at runtime. In a real single-file build ProcessPath is the
+        //    single-file exe itself, so we still return it (the real update path is preserved).
+        //
+        //  - The filename == "dotnet" guard alone is NOT enough. `dotnet run` does not leave
+        //    us running under the shared `dotnet` host: it builds and launches the project's
+        //    own apphost executable (Slopterm.Server.exe in bin/Debug/net10.0/), so
+        //    ProcessPath is that apphost and its filename is "Slopterm.Server", never
+        //    "dotnet". Relying on the filename check alone would wrongly treat a dev build as
+        //    publishable, hash the apphost, find its SHA differs from the release asset, and
+        //    report a bogus "update available" (plus the update dot). We keep the "dotnet"
+        //    check as cheap belt-and-suspenders (covers `dotnet exec` on non-Windows).
+        var isSingleFile = string.IsNullOrEmpty(System.Reflection.Assembly.GetEntryAssembly()?.Location);
+        if (!isSingleFile)
+        {
+            return null;
+        }
+
         var fileName = Path.GetFileNameWithoutExtension(path);
         return string.Equals(fileName, "dotnet", StringComparison.OrdinalIgnoreCase) ? null : path;
     }

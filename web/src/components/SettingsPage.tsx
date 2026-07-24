@@ -143,7 +143,15 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-col gap-4 p-4 sm:p-6">
+    // Settings is read-heavy content, not chrome: opt the whole page - its labels, section
+    // descriptions, and the encryption/danger-zone warning copy - back into text selection and
+    // the native right-click menu, using the same select-text + data-selectable-text pattern as
+    // the AI agent transcript (see index.css / issue #61). Marking the root covers the nested
+    // AiSettingsSection and UpdateSection too, since they render inside here.
+    <div
+      data-selectable-text
+      className="mx-auto flex w-full max-w-lg select-text flex-col gap-4 p-4 sm:p-6"
+    >
       <h2 className="text-lg font-semibold text-slate-100">Settings</h2>
 
       <div className="flex items-center justify-between gap-4 rounded border border-slate-700 bg-slate-900 p-4">

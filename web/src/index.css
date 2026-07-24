@@ -31,6 +31,23 @@ textarea:not(.xterm-helper-textarea),
   -webkit-user-select: text;
 }
 
+/* Read-heavy surfaces (the Settings page, connection logs, saved-snippet command strings, the
+   AI agent transcript) opt back into selection with a single `data-selectable-text` marker,
+   overriding the app-wide `user-select: none` above (issue #61). That's the same marker
+   `useSuppressBrowserContextMenu` in App.tsx checks to hand these surfaces the native
+   right-click menu back, so one attribute makes a block both selectable AND copyable from the
+   context menu - keeping the opt-in mechanism identical to the AI agent transcript. We apply it
+   to the element and every descendant (`*`) so selection holds no matter how deeply the
+   prose/labels/log lines are nested, rather than depending on `select-text` inheriting cleanly
+   through every child. Genuine chrome (title bar, tab strip, nav rail, host cards) never carries
+   the marker, so accidental drag-selection across it stays disabled - which was the whole point
+   of issue #61. */
+[data-selectable-text],
+[data-selectable-text] * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Custom title bar drag regions (chromeless desktop window). The bar itself is draggable
    to move the window; interactive controls inside it opt back out so they stay clickable.
    No-ops in a normal browser, which draws its own chrome. */

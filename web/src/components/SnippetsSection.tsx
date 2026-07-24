@@ -66,7 +66,15 @@ function SnippetsList() {
               key={s.id}
               icon={<SnippetsIcon aria-hidden="true" className="h-5 w-5 text-slate-400" />}
               title={<span className="truncate font-medium text-slate-100">{s.snippet.name}</span>}
-              subtitle={<span className="font-mono" title={s.snippet.command}>{s.snippet.command}</span>}
+              // The saved command is text you'd want to grab (there's even a Copy button for it) -
+              // opt just this string into selection + the native right-click menu, scoped to the
+              // span so the surrounding card and card grid stay non-selectable chrome like the
+              // host grid (same select-text + data-selectable-text marker; see index.css / #61).
+              subtitle={
+                <span data-selectable-text className="select-text font-mono" title={s.snippet.command}>
+                  {s.snippet.command}
+                </span>
+              }
               actions={
                 <>
                   <button type="button" onClick={() => handleCopy(s.id, s.snippet.command)} className={cardPrimaryButton}>
