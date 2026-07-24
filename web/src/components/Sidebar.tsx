@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { ForwardingIcon, HostsIcon, KeychainIcon, LogsIcon, MenuIcon, SettingsIcon, SidebarToggleIcon, SnippetsIcon, SyncIcon, CloseIcon } from './icons'
+import { AppearanceIcon, ForwardingIcon, HostsIcon, KeychainIcon, LogsIcon, MenuIcon, SettingsIcon, SidebarToggleIcon, SnippetsIcon, SyncIcon, CloseIcon } from './icons'
 import type { ComponentType, SVGProps } from 'react'
 
-export type NavSection = 'hosts' | 'keychain' | 'snippets' | 'forwarding' | 'sync' | 'logs' | 'settings'
+export type NavSection = 'hosts' | 'keychain' | 'snippets' | 'forwarding' | 'sync' | 'logs' | 'appearance' | 'settings'
 
 const SECTIONS: { id: Exclude<NavSection, 'settings'>; label: string; icon: ComponentType<SVGProps<SVGSVGElement>> }[] = [
   { id: 'hosts', label: 'Hosts', icon: HostsIcon },
@@ -98,15 +98,26 @@ export function Sidebar({ active, onSelect, collapsed, onToggleCollapsed, update
             </button>
           ))}
           {!hideChromeControls && (
-            <button
-              type="button"
-              onClick={() => onSelect('settings')}
-              title="Settings"
-              className={`${itemClasses(active === 'settings')} mt-auto`}
-            >
-              {settingsIcon}
-              {!collapsed && <span className="truncate">Settings</span>}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onSelect('appearance')}
+                title="Appearance"
+                className={`${itemClasses(active === 'appearance')} mt-auto`}
+              >
+                <AppearanceIcon aria-hidden="true" className="h-5 w-5 shrink-0" />
+                {!collapsed && <span className="truncate">Appearance</span>}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelect('settings')}
+                title="Settings"
+                className={itemClasses(active === 'settings')}
+              >
+                {settingsIcon}
+                {!collapsed && <span className="truncate">Settings</span>}
+              </button>
+            </>
           )}
         </div>
       </nav>
@@ -153,8 +164,16 @@ export function Sidebar({ active, onSelect, collapsed, onToggleCollapsed, update
               ))}
               <button
                 type="button"
+                onClick={() => selectAndClose('appearance')}
+                className={`${itemClasses(active === 'appearance')} mt-auto`}
+              >
+                <AppearanceIcon aria-hidden="true" className="h-5 w-5 shrink-0" />
+                <span className="truncate">Appearance</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => selectAndClose('settings')}
-                className={`${itemClasses(active === 'settings')} mt-auto`}
+                className={itemClasses(active === 'settings')}
               >
                 {settingsIcon}
                 <span className="truncate">Settings</span>

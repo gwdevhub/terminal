@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type FontWeight } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { resizeTerminal, sshUpload, terminalSocketUrl, type ConnectRequest } from '../lib/api'
+import { getAppearance, subscribeAppearance, terminalFontFamily } from '../lib/appearance'
 
 interface TerminalViewProps {
   sessionId: string
@@ -92,10 +93,17 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
     const container = containerRef.current
     if (!container) return
 
+    // The terminal font is user-configurable on the Appearance screen. xterm measures glyphs
+    // itself and doesn't read CSS, so its metrics come straight from the appearance settings
+    // here (initial values) and via subscribeAppearance below (live updates).
+    const initialFont = getAppearance().terminalFont
     const term = new Terminal({
       cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
+      fontSize: initialFont.size,
+      fontFamily: terminalFontFamily(initialFont),
+      fontWeight: initialFont.weight as FontWeight,
+      letterSpacing: initialFont.letterSpacing,
+      lineHeight: initialFont.lineHeight,
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
@@ -117,6 +125,18 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
       void resizeTerminal(sessionId, term.cols, term.rows)
     }
 
+    // Live-apply Appearance changes to the terminal font. Char cell size changes with the
+    // font, so refit afterwards (which also re-syncs the PTY size to the new col/row count).
+    const unsubscribeAppearance = subscribeAppearance((settings) => {
+      const font = settings.terminalFont
+      term.options.fontFamily = terminalFontFamily(font)
+      term.options.fontSize = font.size
+      term.options.fontWeight = font.weight as FontWeight
+      term.options.letterSpacing = font.letterSpacing
+      term.options.lineHeight = font.lineHeight
+      fitAndSyncSize()
+    })
+
     // OSC 7 (ESC ]7;file://host/path BEL) is the de-facto shell-integration escape a shell
     // emits on each prompt to report its working directory. Parsing it lets paste/drag
     // uploads target the shell's *actual* cwd, following the user's `cd`s invisibly instead
@@ -133,6 +153,48 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
       return true
     })
 
+    // Guards against a double paste: while our Ctrl+V handler is reading the clipboard
+    // itself, the native `paste` listener (below) must not ALSO process the same clipboard
+    // in engines where preventDefault() on the keydown doesn't cancel the native paste.
+    let manualPasteActive = false
+
+    // The desktop webview (Photino) doesn't deliver a native `paste` event to xterm's hidden
+    // textarea for Ctrl+V, so plain-text paste silently did nothing there. Read the clipboard
+    // ourselves and feed it in: a file/image uploads into the cwd (same as the native paste
+    // and drag-drop paths), any text is written as terminal input via term.paste().
+    async function pasteFromClipboard() {
+      try {
+        if (navigator.clipboard.read) {
+          const items = await navigator.clipboard.read()
+          const files: File[] = []
+          for (const item of items) {
+            const fileType = item.types.find((t) => !t.startsWith('text/'))
+            // Empty name lets uploadFileName() synthesize `pasted-<ts>.<ext>` from the type.
+            if (fileType) files.push(new File([await item.getType(fileType)], '', { type: fileType }))
+          }
+          if (files.length > 0) {
+            await uploadFiles(files)
+            return
+          }
+          const textItem = items.find((item) => item.types.includes('text/plain'))
+          if (textItem) {
+            const text = await (await textItem.getType('text/plain')).text()
+            if (text) term.paste(text)
+          }
+          return
+        }
+      } catch {
+        // read() is unavailable or rejected (permissions, or a non-text item some engines
+        // won't hand over) - fall back to the text-only path below.
+      }
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text) term.paste(text)
+      } catch {
+        // Clipboard fully unavailable - nothing to paste.
+      }
+    }
+
     // Ctrl+C is overloaded in every terminal: with a selection active it should copy
     // (and clear the selection, matching what most terminal emulators do), with nothing
     // selected it's the interrupt signal and must reach the remote process as usual.
@@ -145,6 +207,20 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
       // window level in App.tsx). Swallow it here so a focused terminal doesn't also send
       // the literal \x14 (DC4) control byte to the remote shell.
       if (event.type === 'keydown' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && event.code === 'KeyT') {
+        return false
+      }
+
+      // Ctrl+V (and the traditional Ctrl+Shift+V) pastes the clipboard into the terminal.
+      // xterm normally relies on the browser firing a native `paste` event into its
+      // textarea, which the desktop webview doesn't do for Ctrl+V - so we read the clipboard
+      // ourselves. preventDefault + return false stops xterm's own key handling and any
+      // native paste that would fire elsewhere, so it can't double up with pasteFromClipboard.
+      if (event.type === 'keydown' && event.ctrlKey && !event.altKey && !event.metaKey && event.code === 'KeyV') {
+        event.preventDefault()
+        manualPasteActive = true
+        void pasteFromClipboard().finally(() => {
+          manualPasteActive = false
+        })
         return false
       }
 
@@ -175,6 +251,12 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
     // it keeps working exactly as before. The listener is on the textarea xterm creates for
     // input, which is where the browser fires the paste.
     const onPaste = (event: ClipboardEvent) => {
+      // Our Ctrl+V handler above is already reading this same clipboard - suppress the
+      // native paste so the text/file isn't applied twice.
+      if (manualPasteActive) {
+        event.preventDefault()
+        return
+      }
       const files = event.clipboardData ? Array.from(event.clipboardData.files) : []
       if (files.length === 0) return // plain text - let xterm handle it as usual
       event.preventDefault()
@@ -264,6 +346,7 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
 
     return () => {
       disposed = true
+      unsubscribeAppearance()
       startupTimeouts.forEach(clearTimeout)
       clearTimeout(resizeTimeout)
       resizeObserver.disconnect()

@@ -109,6 +109,51 @@ test('two concurrent tabs keep separate live sessions when switching between the
   await deleteHost(page, 'tabs test host')
 })
 
+test('a tab can be renamed inline and the new name survives a restart', async ({ page }) => {
+  await page.goto(ctx.baseUrl)
+  await gotoSection(page, 'Hosts')
+  await ensureVaultUnlocked(page)
+
+  await page.click('button:has-text("New host")')
+  await page.fill('#name', 'rename test host')
+  await page.fill('#host', ctx.sshHost)
+  await page.fill('#port', String(ctx.sshPort))
+  await page.fill('#username', ctx.sshUsername)
+  await page.fill('#password', ctx.sshPassword)
+  await page.click('button:has-text("Save host")')
+  await expect(page.getByText('rename test host')).toBeVisible({ timeout: 10_000 })
+
+  await gotoSection(page, 'Hosts')
+  await page.getByRole('button', { name: 'SSH to rename test host' }).click()
+  await expect(async () => {
+    expect(await terminalText(page)).toContain('Welcome to OpenSSH Server')
+  }).toPass({ timeout: 15_000 })
+
+  // Double-click the tab's label button to open the inline rename field, replace the
+  // auto-generated user@host name with a custom one, and commit with Enter.
+  const defaultLabel = `${ctx.sshUsername}@${ctx.sshHost}`
+  await page.getByRole('button', { name: defaultLabel, exact: true }).dblclick()
+  const renameField = page.getByRole('textbox', { name: `Rename ${defaultLabel}` })
+  await expect(renameField).toBeVisible()
+  await renameField.fill('my prod box')
+  await renameField.press('Enter')
+
+  // The tab now carries the custom name, and the auto-generated one is gone.
+  await expect(page.getByRole('button', { name: 'my prod box', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: defaultLabel, exact: true })).toHaveCount(0)
+
+  // The rename is persisted like any other tab state, so it must come back after a
+  // restart rather than reverting to user@host.
+  await page.goto(ctx.baseUrl)
+  await expect(page.getByRole('button', { name: 'my prod box', exact: true })).toBeVisible({ timeout: 15_000 })
+
+  // Clean up (shared vault - see the note in the first test). The tab's Close button is
+  // keyed off the custom label now.
+  await closeTab(page, 'my prod box')
+  await gotoSection(page, 'Hosts')
+  await deleteHost(page, 'rename test host')
+})
+
 test('Ctrl+T duplicates the active tab into a new tab on the same host', async ({ page }) => {
   await page.goto(ctx.baseUrl)
   await gotoSection(page, 'Hosts')

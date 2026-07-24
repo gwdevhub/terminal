@@ -558,6 +558,55 @@ public sealed class VaultService
         SaveRecord("secrets", OpenTabsRecordId, record);
     }
 
+    private const string AppearanceRecordId = "appearance";
+
+    /// <summary>
+    /// The synced appearance (colors + fonts) blob, or null if locked or nothing saved yet.
+    /// Stored opaquely as the raw JSON the client sends (a JsonElement) so the theme schema
+    /// can evolve entirely client-side without a backend change. Never throws - the client
+    /// keeps a local cache for instant theming and treats null as "nothing to sync".
+    /// </summary>
+    public JsonElement? GetAppearance()
+    {
+        if (!IsUnlocked)
+        {
+            return null;
+        }
+
+        var path = Path.Combine(_vaultDir, "secrets", $"{AppearanceRecordId}.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RecordEnvelope>(File.ReadAllText(path));
+            if (envelope is null)
+            {
+                return null;
+            }
+
+            var json = VaultCrypto.Decrypt(_key!, Convert.FromBase64String(envelope.Nonce), Convert.FromBase64String(envelope.Ciphertext));
+            return JsonSerializer.Deserialize<JsonElement>(json);
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or CryptographicException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Best-effort - silently no-ops if locked (same contract as SaveOpenTabs).</summary>
+    public void SaveAppearance(JsonElement settings)
+    {
+        if (!IsUnlocked)
+        {
+            return;
+        }
+
+        SaveRecord("secrets", AppearanceRecordId, settings);
+    }
+
     public IReadOnlyList<(string Id, DateTimeOffset UpdatedAt, HostRecord Record)> ListHosts() => ListRecords<HostRecord>("hosts");
     public string SaveHost(string? id, HostRecord record) => SaveRecord("hosts", id, record);
     public bool DeleteHost(string id) => DeleteRecord("hosts", id);
