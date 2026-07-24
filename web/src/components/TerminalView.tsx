@@ -9,6 +9,10 @@ interface TerminalViewProps {
   sessionId: string
   isActive: boolean
   onSessionClosed: () => void
+  // Fired the first time output arrives while this tab is in the background (inactive), so
+  // App.tsx can flag it as having unseen activity (see the favicon tab badge). Fires at most
+  // once per background stretch - it re-arms when the tab is next viewed.
+  onActivity?: () => void
   // The tab's own connect info - an SSH tab holds only an interactive shell server-side,
   // not an SFTP channel, so paste/drag-to-upload (below) opens a fresh one-shot SFTP
   // connection from this same request rather than reusing the shell.
@@ -31,10 +35,16 @@ function uploadFileName(item: File): string {
 // Renders only the terminal itself - the tab strip (App.tsx/TabBar.tsx) owns the
 // session label and close/disconnect action now that multiple sessions can be open at
 // once (issue #9), so a second "Session xxx / Disconnect" header here would be redundant.
-export function TerminalView({ sessionId, isActive, onSessionClosed, request, startupCommands }: TerminalViewProps) {
+export function TerminalView({ sessionId, isActive, onSessionClosed, onActivity, request, startupCommands }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const onSessionClosedRef = useRef(onSessionClosed)
+  // isActive/onActivity read from refs inside the [sessionId]-keyed socket effect below,
+  // which captures its closure once; activityNotifiedRef debounces the callback to one fire
+  // per background stretch (re-armed when the tab becomes active again).
+  const isActiveRef = useRef(isActive)
+  const onActivityRef = useRef(onActivity)
+  const activityNotifiedRef = useRef(false)
   // Best-effort remote cwd, tracked from OSC 7 (see below) - null until the shell reports
   // one (it never will if it isn't configured to emit OSC 7), which is the signal to fall
   // back to prompting for a destination on upload.
@@ -46,6 +56,10 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
   useEffect(() => {
     onSessionClosedRef.current = onSessionClosed
   }, [onSessionClosed])
+
+  useEffect(() => {
+    onActivityRef.current = onActivity
+  }, [onActivity])
 
   useEffect(() => {
     requestRef.current = request
@@ -312,6 +326,11 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
     })
     socket.addEventListener('message', (event) => {
       term.write(new Uint8Array(event.data as ArrayBuffer))
+      // Output landed while this tab is in the background - flag it once (until next viewed).
+      if (!isActiveRef.current && !activityNotifiedRef.current) {
+        activityNotifiedRef.current = true
+        onActivityRef.current?.()
+      }
     })
     let disposed = false
     socket.addEventListener('close', () => {
@@ -367,8 +386,11 @@ export function TerminalView({ sessionId, isActive, onSessionClosed, request, st
 
   // Re-focus when this tab becomes the active one - it stays mounted-but-hidden while
   // inactive (see App.tsx), so nothing else would move focus back into it on tab switch.
+  // Viewing the tab also re-arms the background-activity notifier (its output is now seen).
   useEffect(() => {
+    isActiveRef.current = isActive
     if (isActive) {
+      activityNotifiedRef.current = false
       termRef.current?.focus()
     }
   }, [isActive])
