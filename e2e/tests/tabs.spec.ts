@@ -147,6 +147,13 @@ test('a tab can be renamed inline and the new name survives a restart', async ({
   await page.goto(ctx.baseUrl)
   await expect(page.getByRole('button', { name: 'my prod box', exact: true })).toBeVisible({ timeout: 15_000 })
 
+  // Wait for the restored tab to finish reconnecting before closing it: closing a tab that's
+  // still 'connecting' skips the confirmation dialog that closeTab() clicks through, so it
+  // would otherwise hang waiting for a dialog that never appears.
+  await expect(async () => {
+    expect(await terminalText(page)).toContain('Welcome to OpenSSH Server')
+  }).toPass({ timeout: 15_000 })
+
   // Clean up (shared vault - see the note in the first test). The tab's Close button is
   // keyed off the custom label now.
   await closeTab(page, 'my prod box')
